@@ -146,7 +146,11 @@ def get_main_menu_keyboard():
             InlineKeyboardButton(
                 "📦 مشاهده محصولات",
                 callback_data="user_view_products"
-            )
+            ),
+            InlineKeyboardButton(
+                "🛒 سبد خرید",
+                callback_data="view_cart"
+            ),
         ],
         [
             InlineKeyboardButton(
@@ -157,7 +161,6 @@ def get_main_menu_keyboard():
     ]
 
     return InlineKeyboardMarkup(keyboard)
-
 
 # =========================================================
 # منوی مدیریت
@@ -311,7 +314,9 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    context.user_data.clear()
+    for key in list(context.user_data.keys()):
+        if key != "cart":
+            context.user_data.pop(key, None)
 
     text = (
         "✨ <b>به فروشگاه هیوه خوش آمدید</b> ✨\n\n"
@@ -350,11 +355,9 @@ async def show_products(
 ):
 
     query = update.callback_query
-
     await query.answer()
 
     try:
-
         response = (
             supabase
             .table("products")
@@ -366,56 +369,58 @@ async def show_products(
         products = response.data or []
 
         if not products:
-
             await query.edit_message_text(
                 "📦 در حال حاضر محصولی در فروشگاه ثبت نشده است.",
                 reply_markup=get_main_menu_keyboard(),
             )
-
             return ConversationHandler.END
 
-        # حذف پیام قبلی
         try:
             await query.message.delete()
         except Exception:
             pass
 
-        # ارسال محصولات
         for product in products:
-
             caption = product_caption(product)
-
             image_id = product.get("image_url")
+            product_id = product.get("id")
+
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "💎 مشاهده جزئیات",
+                        callback_data=f"product_detail:{product_id}"
+                    ),
+                    InlineKeyboardButton(
+                        "🛒 افزودن به سبد",
+                        callback_data=f"add_to_cart:{product_id}"
+                    ),
+                ]
+            ])
 
             if image_id:
-
                 try:
-
                     await context.bot.send_photo(
                         chat_id=query.message.chat_id,
                         photo=image_id,
                         caption=caption,
                         parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard,
                     )
-
                 except Exception as e:
-
-                    logger.error(
-                        f"خطا در ارسال عکس محصول: {e}"
-                    )
-
+                    logger.error(f"خطا در ارسال عکس محصول: {e}")
                     await context.bot.send_message(
                         chat_id=query.message.chat_id,
                         text=caption,
                         parse_mode=ParseMode.HTML,
+                        reply_markup=keyboard,
                     )
-
             else:
-
                 await context.bot.send_message(
                     chat_id=query.message.chat_id,
                     text=caption,
                     parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
                 )
 
         await context.bot.send_message(
@@ -425,23 +430,262 @@ async def show_products(
             reply_markup=get_main_menu_keyboard(),
         )
 
-    except Exception as e:
-
-        logger.exception(
-            "خطا در دریافت محصولات"
-        )
-
+    except Exception:
+        logger.exception("خطا در دریافت محصولات")
         try:
-
             await query.edit_message_text(
                 "❌ خطایی هنگام دریافت محصولات رخ داد.",
                 reply_markup=get_main_menu_keyboard(),
             )
-
         except Exception:
             pass
 
     return ConversationHandler.END
+
+# =========================================================
+# سبد خرید مشتری
+# =========================================================
+
+def get_cart(context):
+    return context.user_data.setdefault("cart", {})
+
+
+async def fetch_product(product_id):
+    result = (
+        supabase
+        .table("products")
+        .select("*")
+        .eq("id", product_id)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def cart_total(context):
+    total = 0
+    for item in get_cart(context).values():
+        total += int(item["price"]) * int(item["quantity"])
+    return total
+
+
+def cart_count(context):
+    return sum(int(item["quantity"]) for item in get_cart(context).values())
+
+
+def get_cart_keyboard(context):
+    keyboard = []
+    for product_id, item in get_cart(context).items():
+        keyboard.append([
+            InlineKeyboardButton(
+                "➖",
+                callback_data=f"cart_dec:{product_id}"
+            ),
+            InlineKeyboardButton(
+                f"{item['name']} × {item['quantity']}",
+                callback_data=f"product_detail:{product_id}"
+            ),
+            InlineKeyboardButton(
+                "➕",
+                callback_data=f"cart_inc:{product_id}"
+            ),
+        ])
+        keyboard.append([
+            InlineKeyboardButton(
+                "🗑 حذف از سبد",
+                callback_data=f"cart_remove:{product_id}"
+            )
+        ])
+
+    if get_cart(context):
+        keyboard.append([
+            InlineKeyboardButton(
+                "🗑 خالی کردن سبد",
+                callback_data="cart_clear"
+            )
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(
+            "📦 مشاهده محصولات",
+            callback_data="user_view_products"
+        )
+    ])
+    keyboard.append([
+        InlineKeyboardButton(
+            "🔙 منوی اصلی",
+            callback_data="back_to_main"
+        )
+    ])
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    cart = get_cart(context)
+
+    if not cart:
+        await query.edit_message_text(
+            "🛒 <b>سبد خرید شما خالی است.</b>\n\n"
+            "از بخش محصولات، کالاهای موردنظر خود را به سبد اضافه کنید.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_cart_keyboard(context),
+        )
+        return
+
+    lines = ["🛒 <b>سبد خرید شما</b>\n"]
+    for item in cart.values():
+        subtotal = int(item["price"]) * int(item["quantity"])
+        lines.append(
+            f"💎 {safe_text(item['name'])}\n"
+            f"تعداد: <b>{item['quantity']}</b> × {format_price(item['price'])} "
+            f"= <b>{format_price(subtotal)}</b>"
+        )
+
+    lines.append(f"\n💰 <b>مبلغ کل: {format_price(cart_total(context))}</b>")
+    lines.append(f"📦 تعداد کالا: <b>{cart_count(context)}</b>")
+
+    await query.edit_message_text(
+        "\n\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_cart_keyboard(context),
+    )
+
+
+async def add_product_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        product_id = int(query.data.split(":", 1)[1])
+        product = await fetch_product(product_id)
+
+        if not product:
+            await query.answer("❌ محصول پیدا نشد.", show_alert=True)
+            return
+
+        cart = get_cart(context)
+        key = str(product_id)
+
+        if key in cart:
+            cart[key]["quantity"] += 1
+        else:
+            cart[key] = {
+                "name": product.get("name", "بدون نام"),
+                "price": int(Decimal(str(product.get("price", 0)))),
+                "quantity": 1,
+            }
+
+        await query.answer("✅ محصول به سبد خرید اضافه شد.")
+
+    except Exception:
+        logger.exception("خطا در افزودن محصول به سبد")
+        await query.answer("❌ خطا در افزودن محصول به سبد.", show_alert=True)
+
+
+async def product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        product_id = int(query.data.split(":", 1)[1])
+        product = await fetch_product(product_id)
+
+        if not product:
+            await query.edit_message_text(
+                "❌ این محصول دیگر در فروشگاه موجود نیست.",
+                reply_markup=get_main_menu_keyboard(),
+            )
+            return
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🛒 افزودن به سبد",
+                    callback_data=f"add_to_cart:{product_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🛒 مشاهده سبد خرید",
+                    callback_data="view_cart"
+                ),
+                InlineKeyboardButton(
+                    "📦 بازگشت به محصولات",
+                    callback_data="user_view_products"
+                ),
+            ],
+        ])
+
+        caption = product_caption(product)
+        image_id = product.get("image_url")
+
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        if image_id:
+            try:
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=image_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+            except Exception:
+                await context.bot.send_message(
+                    chat_id=query.message.chat_id,
+                    text=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+        else:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
+    except Exception:
+        logger.exception("خطا در نمایش جزئیات محصول")
+        await query.answer("❌ خطا در نمایش محصول.", show_alert=True)
+
+
+async def cart_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        action, product_id = query.data.split(":", 1)
+        cart = get_cart(context)
+
+        if product_id not in cart:
+            await show_cart(update, context)
+            return
+
+        if action == "cart_inc":
+            cart[product_id]["quantity"] += 1
+        elif action == "cart_dec":
+            cart[product_id]["quantity"] -= 1
+            if cart[product_id]["quantity"] <= 0:
+                del cart[product_id]
+        elif action == "cart_remove":
+            del cart[product_id]
+
+        await show_cart(update, context)
+
+    except Exception:
+        logger.exception("خطا در تغییر سبد خرید")
+        await query.answer("❌ خطا در تغییر سبد خرید.", show_alert=True)
+
+
+async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("🗑 سبد خرید خالی شد.")
+    get_cart(context).clear()
+    await show_cart(update, context)
 
 
 # =========================================================
@@ -1479,6 +1723,30 @@ async def button_handler(
     query = update.callback_query
     data = query.data
     user_id = query.from_user.id
+
+    # --------------------------------
+    # سبد خرید و محصولات
+    # --------------------------------
+
+    if data == "view_cart":
+        await show_cart(update, context)
+        return
+
+    if data.startswith("add_to_cart:"):
+        await add_product_to_cart(update, context)
+        return
+
+    if data.startswith("product_detail:"):
+        await product_detail(update, context)
+        return
+
+    if data.startswith(("cart_inc:", "cart_dec:", "cart_remove:")):
+        await cart_change(update, context)
+        return
+
+    if data == "cart_clear":
+        await clear_cart(update, context)
+        return
 
     # --------------------------------
     # بازگشت به منوی اصلی
