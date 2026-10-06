@@ -255,7 +255,6 @@ def main():
 
     print("🤖 ربات با موفقیت روشن شد و آماده به کار است...")
     
-    # استفاده از تنظیم استاندارد drop_pending_updates برای جلوگیری از تداخل و خطای Conflict
     application.run_polling(drop_pending_updates=True)
 
 
