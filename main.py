@@ -556,7 +556,6 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_product_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
     try:
         product_id = int(query.data.split(":", 1)[1])
@@ -582,7 +581,10 @@ async def add_product_to_cart(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     except Exception:
         logger.exception("خطا در افزودن محصول به سبد")
-        await query.answer("❌ خطا در افزودن محصول به سبد.", show_alert=True)
+        try:
+            await query.answer("❌ خطا در افزودن محصول به سبد.", show_alert=True)
+        except Exception:
+            pass
 
 
 async def product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -683,8 +685,8 @@ async def cart_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clear_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("🗑 سبد خرید خالی شد.")
     get_cart(context).clear()
+    await query.answer("🗑 سبد خرید خالی شد.")
     await show_cart(update, context)
 
 
@@ -1756,7 +1758,9 @@ async def button_handler(
 
         await query.answer()
 
-        context.user_data.clear()
+        for key in list(context.user_data.keys()):
+            if key != "cart":
+                context.user_data.pop(key, None)
 
         await query.edit_message_text(
             "✨ <b>به منوی اصلی هیوه برگشتید.</b>",
