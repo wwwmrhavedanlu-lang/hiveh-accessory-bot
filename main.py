@@ -95,7 +95,14 @@ supabase: Client = create_client(
 
     DELETE_SELECT_CODE,
     DELETE_CONFIRM,
-) = range(13)
+
+    CHECKOUT_NAME,
+    CHECKOUT_PHONE,
+    CHECKOUT_ADDRESS,
+    CHECKOUT_CONFIRM,
+    ADMIN_ORDERS,
+    ADMIN_ORDER_STATUS,
+) = range(19)
 
 
 # =========================================================
@@ -185,6 +192,12 @@ def get_admin_menu_keyboard():
             InlineKeyboardButton(
                 "🗑 حذف محصول",
                 callback_data="admin_delete_product"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📋 مدیریت سفارش‌ها",
+                callback_data="admin_orders"
             )
         ],
         [
@@ -443,6 +456,519 @@ async def show_products(
     return ConversationHandler.END
 
 # =========================================================
+# سفارش و تسویه حساب
+# =========================================================
+
+def get_checkout_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "✅ تأیید و ثبت سفارش",
+                callback_data="checkout_confirm"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "✏️ تغییر اطلاعات",
+                callback_data="checkout_restart"
+            ),
+            InlineKeyboardButton(
+                "❌ لغو",
+                callback_data="checkout_cancel"
+            )
+        ],
+    ])
+
+
+def get_admin_orders_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "📋 سفارش‌های جدید",
+                callback_data="admin_orders_pending"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📦 همه سفارش‌ها",
+                callback_data="admin_orders_all"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 بازگشت به پنل",
+                callback_data="admin_panel"
+            )
+        ],
+    ])
+
+
+def get_order_status_keyboard(order_id):
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⏳ در حال بررسی",
+                callback_data=f"order_status:{order_id}:processing"
+            ),
+            InlineKeyboardButton(
+                "📦 آماده ارسال",
+                callback_data=f"order_status:{order_id}:shipped"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "🚚 ارسال شد",
+                callback_data=f"order_status:{order_id}:delivered"
+            ),
+            InlineKeyboardButton(
+                "❌ لغو سفارش",
+                callback_data=f"order_status:{order_id}:cancelled"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 لیست سفارش‌ها",
+                callback_data="admin_orders_all"
+            )
+        ]
+    ])
+
+
+def order_status_fa(status):
+    return {
+        "pending": "🆕 جدید",
+        "processing": "⏳ در حال بررسی",
+        "shipped": "📦 آماده ارسال",
+        "delivered": "🚚 ارسال شد",
+        "cancelled": "❌ لغو شده",
+    }.get(status, status)
+
+
+async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not get_cart(context):
+        await query.answer(
+            "🛒 سبد خرید شما خالی است.",
+            show_alert=True
+        )
+        return ConversationHandler.END
+
+    context.user_data["checkout"] = {}
+
+    await query.edit_message_text(
+        "🧾 <b>ثبت سفارش</b>\n\n"
+        "لطفاً نام و نام خانوادگی خود را وارد کنید:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_cancel_keyboard(),
+    )
+    return CHECKOUT_NAME
+
+
+async def checkout_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+
+    if len(name) < 2:
+        await update.message.reply_text(
+            "❌ نام واردشده معتبر نیست. دوباره وارد کنید:"
+        )
+        return CHECKOUT_NAME
+
+    context.user_data.setdefault("checkout", {})["name"] = name
+
+    await update.message.reply_text(
+        "📱 شماره موبایل خود را وارد کنید:\n\n"
+        "مثال: <code>09123456789</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_cancel_keyboard(),
+    )
+    return CHECKOUT_PHONE
+
+
+async def checkout_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    phone = update.message.text.strip().replace(" ", "").replace("-", "")
+
+    if not phone.isdigit() or len(phone) < 10 or len(phone) > 15:
+        await update.message.reply_text(
+            "❌ شماره موبایل معتبر نیست. لطفاً دوباره وارد کنید:"
+        )
+        return CHECKOUT_PHONE
+
+    context.user_data.setdefault("checkout", {})["phone"] = phone
+
+    await update.message.reply_text(
+        "📍 آدرس کامل گیرنده را وارد کنید:\n\n"
+        "استان، شهر، خیابان، کوچه، پلاک و واحد",
+        reply_markup=get_cancel_keyboard(),
+    )
+    return CHECKOUT_ADDRESS
+
+
+async def checkout_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    address = update.message.text.strip()
+
+    if len(address) < 10:
+        await update.message.reply_text(
+            "❌ آدرس خیلی کوتاه است. لطفاً آدرس کامل را وارد کنید:"
+        )
+        return CHECKOUT_ADDRESS
+
+    context.user_data.setdefault("checkout", {})["address"] = address
+
+    checkout = context.user_data["checkout"]
+    lines = [
+        "🧾 <b>بررسی نهایی سفارش</b>",
+        "",
+        f"👤 نام: <b>{safe_text(checkout['name'])}</b>",
+        f"📱 موبایل: <code>{safe_text(checkout['phone'])}</code>",
+        f"📍 آدرس: {safe_text(checkout['address'])}",
+        "",
+        "🛒 <b>اقلام سفارش:</b>",
+    ]
+
+    for item in get_cart(context).values():
+        subtotal = int(item["price"]) * int(item["quantity"])
+        lines.append(
+            f"• {safe_text(item['name'])} × {item['quantity']} = "
+            f"{format_price(subtotal)}"
+        )
+
+    lines.append("")
+    lines.append(f"💰 <b>مبلغ کل: {format_price(cart_total(context))}</b>")
+    lines.append("")
+    lines.append("آیا اطلاعات بالا صحیح است؟")
+
+    await update.message.reply_text(
+        "\n".join(lines),
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_checkout_keyboard(),
+    )
+    return CHECKOUT_CONFIRM
+
+
+async def create_order(context, user):
+    cart = get_cart(context)
+    checkout = context.user_data.get("checkout", {})
+
+    order_data = {
+        "telegram_user_id": user.id,
+        "username": user.username or "",
+        "customer_name": checkout["name"],
+        "phone": checkout["phone"],
+        "address": checkout["address"],
+        "total": cart_total(context),
+        "status": "pending",
+    }
+
+    order_result = (
+        supabase
+        .table("orders")
+        .insert(order_data)
+        .execute()
+    )
+
+    if not order_result.data:
+        raise RuntimeError("ثبت سفارش انجام نشد.")
+
+    order = order_result.data[0]
+    order_id = order["id"]
+
+    items = []
+    for product_id, item in cart.items():
+        items.append({
+            "order_id": order_id,
+            "product_id": int(product_id),
+            "product_name": item["name"],
+            "price": int(item["price"]),
+            "quantity": int(item["quantity"]),
+            "subtotal": int(item["price"]) * int(item["quantity"]),
+        })
+
+    if items:
+        supabase.table("order_items").insert(items).execute()
+
+    return order
+
+
+async def checkout_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+    if query.data == "checkout_cancel":
+        await query.answer("❌ ثبت سفارش لغو شد.")
+        context.user_data.pop("checkout", None)
+        await query.edit_message_text(
+            "❌ ثبت سفارش لغو شد.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return ConversationHandler.END
+
+    if query.data == "checkout_restart":
+        await query.answer()
+        context.user_data["checkout"] = {}
+        await query.edit_message_text(
+            "🧾 <b>ثبت سفارش</b>\n\n"
+            "لطفاً نام و نام خانوادگی خود را وارد کنید:",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_cancel_keyboard(),
+        )
+        return CHECKOUT_NAME
+
+    if query.data != "checkout_confirm":
+        return CHECKOUT_CONFIRM
+
+    await query.answer("در حال ثبت سفارش...")
+
+    try:
+        order = await create_order(context, query.from_user)
+        order_id = order["id"]
+        total = order["total"]
+
+        get_cart(context).clear()
+        context.user_data.pop("checkout", None)
+
+        await query.edit_message_text(
+            "🎉 <b>سفارش شما با موفقیت ثبت شد!</b>\n\n"
+            f"🧾 شماره سفارش: <code>#{order_id}</code>\n"
+            f"💰 مبلغ سفارش: <b>{format_price(total)}</b>\n"
+            "📌 وضعیت: 🆕 جدید\n\n"
+            "به‌زودی سفارش شما توسط هیوه بررسی می‌شود.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
+
+        if ADMIN_CHAT_ID:
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=(
+                        "🔔 <b>سفارش جدید</b>\n\n"
+                        f"🧾 شماره سفارش: <code>#{order_id}</code>\n"
+                        f"👤 مشتری: {safe_text(order['customer_name'])}\n"
+                        f"📱 موبایل: <code>{safe_text(order['phone'])}</code>\n"
+                        f"💰 مبلغ: <b>{format_price(order['total'])}</b>"
+                    ),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=get_order_status_keyboard(order_id),
+                )
+            except Exception:
+                logger.exception("خطا در اطلاع‌رسانی سفارش جدید به ادمین")
+
+        return ConversationHandler.END
+
+    except Exception:
+        logger.exception("خطا در ثبت سفارش")
+        await query.edit_message_text(
+            "❌ متأسفانه ثبت سفارش انجام نشد.\n"
+            "لطفاً چند لحظه بعد دوباره تلاش کنید.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return ConversationHandler.END
+
+
+async def show_admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+    if not is_admin(query.from_user.id):
+        await query.answer("❌ دسترسی ندارید.", show_alert=True)
+        return
+
+    await query.answer()
+
+    status_filter = None
+    if query.data == "admin_orders_pending":
+        status_filter = "pending"
+
+    try:
+        builder = (
+            supabase
+            .table("orders")
+            .select("*")
+            .order("created_at", desc=True)
+        )
+
+        if status_filter:
+            builder = builder.eq("status", status_filter)
+
+        result = builder.limit(20).execute()
+        orders = result.data or []
+
+        if not orders:
+            await query.edit_message_text(
+                "📋 سفارشی برای نمایش وجود ندارد.",
+                reply_markup=get_admin_orders_keyboard(),
+            )
+            return
+
+        lines = ["📋 <b>سفارش‌ها</b>\n"]
+
+        for order in orders:
+            lines.append(
+                f"🧾 <b>#{order['id']}</b> | "
+                f"{safe_text(order.get('customer_name', '-'))}\n"
+                f"💰 {format_price(order.get('total'))} | "
+                f"{order_status_fa(order.get('status', 'pending'))}"
+            )
+
+        await query.edit_message_text(
+            "\n\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        f"🧾 #{order['id']}",
+                        callback_data=f"admin_order:{order['id']}"
+                    )
+                ]
+                for order in orders
+            ] + [
+                [
+                    InlineKeyboardButton(
+                        "🔙 بازگشت",
+                        callback_data="admin_orders"
+                    )
+                ]
+            ]),
+        )
+
+    except Exception:
+        logger.exception("خطا در نمایش سفارش‌ها")
+        await query.edit_message_text(
+            "❌ خطا در دریافت سفارش‌ها.",
+            reply_markup=get_admin_orders_keyboard(),
+        )
+
+
+async def show_admin_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+    if not is_admin(query.from_user.id):
+        await query.answer("❌ دسترسی ندارید.", show_alert=True)
+        return
+
+    await query.answer()
+
+    try:
+        order_id = int(query.data.split(":", 1)[1])
+
+        order_result = (
+            supabase
+            .table("orders")
+            .select("*")
+            .eq("id", order_id)
+            .limit(1)
+            .execute()
+        )
+
+        if not order_result.data:
+            await query.edit_message_text(
+                "❌ سفارش پیدا نشد.",
+                reply_markup=get_admin_orders_keyboard(),
+            )
+            return
+
+        order = order_result.data[0]
+
+        items_result = (
+            supabase
+            .table("order_items")
+            .select("*")
+            .eq("order_id", order_id)
+            .execute()
+        )
+
+        lines = [
+            f"🧾 <b>سفارش #{order_id}</b>",
+            "",
+            f"👤 مشتری: <b>{safe_text(order.get('customer_name', '-'))}</b>",
+            f"📱 موبایل: <code>{safe_text(order.get('phone', '-'))}</code>",
+            f"📍 آدرس: {safe_text(order.get('address', '-'))}",
+            f"📌 وضعیت: <b>{order_status_fa(order.get('status', 'pending'))}</b>",
+            "",
+            "🛒 <b>اقلام:</b>",
+        ]
+
+        for item in items_result.data or []:
+            lines.append(
+                f"• {safe_text(item.get('product_name', '-'))} × "
+                f"{item.get('quantity', 0)} = "
+                f"{format_price(item.get('subtotal'))}"
+            )
+
+        lines.append("")
+        lines.append(
+            f"💰 <b>مبلغ کل: {format_price(order.get('total'))}</b>"
+        )
+
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_order_status_keyboard(order_id),
+        )
+
+    except Exception:
+        logger.exception("خطا در نمایش جزئیات سفارش")
+        await query.edit_message_text(
+            "❌ خطا در دریافت سفارش.",
+            reply_markup=get_admin_orders_keyboard(),
+        )
+
+
+async def update_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+
+    if not is_admin(query.from_user.id):
+        await query.answer("❌ دسترسی ندارید.", show_alert=True)
+        return
+
+    try:
+        _, order_id, status = query.data.split(":", 2)
+        order_id = int(order_id)
+
+        result = (
+            supabase
+            .table("orders")
+            .update({"status": status})
+            .eq("id", order_id)
+            .execute()
+        )
+
+        if not result.data:
+            await query.answer("❌ سفارش پیدا نشد.", show_alert=True)
+            return
+
+        await query.answer("✅ وضعیت سفارش تغییر کرد.")
+
+        order = result.data[0]
+
+        await query.edit_message_text(
+            f"🧾 <b>سفارش #{order_id}</b>\n\n"
+            f"👤 {safe_text(order.get('customer_name', '-'))}\n"
+            f"💰 {format_price(order.get('total'))}\n"
+            f"📌 وضعیت جدید: <b>{order_status_fa(status)}</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_order_status_keyboard(order_id),
+        )
+
+        try:
+            await context.bot.send_message(
+                chat_id=order["telegram_user_id"],
+                text=(
+                    f"📦 <b>به‌روزرسانی سفارش #{order_id}</b>\n\n"
+                    f"وضعیت سفارش شما تغییر کرد به:\n"
+                    f"<b>{order_status_fa(status)}</b>"
+                ),
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception:
+            logger.exception("خطا در ارسال وضعیت سفارش به مشتری")
+
+    except Exception:
+        logger.exception("خطا در تغییر وضعیت سفارش")
+        await query.answer("❌ خطا در تغییر وضعیت سفارش.", show_alert=True)
+
+
+# =========================================================
 # سبد خرید مشتری
 # =========================================================
 
@@ -502,6 +1028,14 @@ def get_cart_keyboard(context):
             InlineKeyboardButton(
                 "🗑 خالی کردن سبد",
                 callback_data="cart_clear"
+            )
+        ])
+
+    if get_cart(context):
+        keyboard.append([
+            InlineKeyboardButton(
+                "🧾 ثبت سفارش",
+                callback_data="start_checkout"
             )
         ])
 
@@ -1589,6 +2123,11 @@ def build_conversation_handler():
                 start_delete_product,
                 pattern="^admin_delete_product$"
             ),
+
+            CallbackQueryHandler(
+                start_checkout,
+                pattern="^start_checkout$"
+            ),
         ],
 
         states={
@@ -1695,6 +2234,34 @@ def build_conversation_handler():
                     pattern="^delete_confirm_(yes|no)$"
                 )
             ],
+
+            CHECKOUT_NAME: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    checkout_name
+                )
+            ],
+
+            CHECKOUT_PHONE: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    checkout_phone
+                )
+            ],
+
+            CHECKOUT_ADDRESS: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    checkout_address
+                )
+            ],
+
+            CHECKOUT_CONFIRM: [
+                CallbackQueryHandler(
+                    checkout_confirm,
+                    pattern="^(checkout_confirm|checkout_restart|checkout_cancel)$"
+                )
+            ],
         },
 
         fallbacks=[
@@ -1750,6 +2317,10 @@ async def button_handler(
         await clear_cart(update, context)
         return
 
+    if data == "start_checkout":
+        await start_checkout(update, context)
+        return
+
     # --------------------------------
     # بازگشت به منوی اصلی
     # --------------------------------
@@ -1781,6 +2352,31 @@ async def button_handler(
             context
         )
 
+        return
+
+    if data == "admin_orders":
+        if not is_admin(user_id):
+            await query.answer("❌ دسترسی ندارید.", show_alert=True)
+            return
+
+        await query.answer()
+        await query.edit_message_text(
+            "📋 <b>مدیریت سفارش‌ها</b>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_admin_orders_keyboard(),
+        )
+        return
+
+    if data in ("admin_orders_pending", "admin_orders_all"):
+        await show_admin_orders(update, context)
+        return
+
+    if data.startswith("admin_order:"):
+        await show_admin_order(update, context)
+        return
+
+    if data.startswith("order_status:"):
+        await update_order_status(update, context)
         return
 
     # --------------------------------
