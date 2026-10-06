@@ -1,9 +1,12 @@
+import asyncio
+import html
 import logging
 import os
 from decimal import Decimal, InvalidOperation
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -13,6 +16,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
 from supabase import create_client, Client
 
 
@@ -26,18 +30,24 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# لاگ‌های اضافی کتابخانه HTTP را کمتر می‌کنیم
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 # =========================================================
-# تنظیمات محیطی
+# تنظیمات Environment
 # =========================================================
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
 
+
+# =========================================================
 # آیدی عددی ادمین
+# =========================================================
+
 ADMIN_CHAT_ID = 8521643361
 
 
@@ -46,13 +56,13 @@ ADMIN_CHAT_ID = 8521643361
 # =========================================================
 
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN تنظیم نشده است.")
+    raise RuntimeError("❌ BOT_TOKEN تنظیم نشده است.")
 
 if not SUPABASE_URL:
-    raise RuntimeError("SUPABASE_URL تنظیم نشده است.")
+    raise RuntimeError("❌ SUPABASE_URL تنظیم نشده است.")
 
 if not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_KEY تنظیم نشده است.")
+    raise RuntimeError("❌ SUPABASE_KEY تنظیم نشده است.")
 
 
 # =========================================================
@@ -66,7 +76,7 @@ supabase: Client = create_client(
 
 
 # =========================================================
-# State ها
+# State های Conversation
 # =========================================================
 
 (
@@ -89,7 +99,7 @@ supabase: Client = create_client(
 
 
 # =========================================================
-# ابزارهای کمکی
+# توابع کمکی
 # =========================================================
 
 def is_admin(user_id: int) -> bool:
@@ -109,11 +119,28 @@ def format_price(price) -> str:
     try:
         value = int(Decimal(str(price)))
         return f"{value:,} تومان"
+
     except (ValueError, InvalidOperation):
         return str(price)
 
 
+def safe_text(value) -> str:
+    """
+    جلوگیری از خراب شدن HTML تلگرام
+    """
+
+    if value is None:
+        return ""
+
+    return html.escape(str(value))
+
+
+# =========================================================
+# منوی اصلی
+# =========================================================
+
 def get_main_menu_keyboard():
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -132,7 +159,12 @@ def get_main_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
+# =========================================================
+# منوی مدیریت
+# =========================================================
+
 def get_admin_menu_keyboard():
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -169,7 +201,12 @@ def get_admin_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
+# =========================================================
+# منوی ویرایش
+# =========================================================
+
 def get_edit_menu_keyboard():
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -193,7 +230,7 @@ def get_edit_menu_keyboard():
         ],
         [
             InlineKeyboardButton(
-                "🔙 بازگشت",
+                "🔙 بازگشت به پنل",
                 callback_data="admin_panel"
             )
         ],
@@ -202,7 +239,30 @@ def get_edit_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
+# =========================================================
+# دکمه لغو
+# =========================================================
+
+def get_cancel_keyboard():
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "❌ لغو عملیات",
+                    callback_data="cancel_operation"
+                )
+            ]
+        ]
+    )
+
+
+# =========================================================
+# دکمه تایید حذف
+# =========================================================
+
 def get_delete_confirm_keyboard():
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -219,26 +279,26 @@ def get_delete_confirm_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_cancel_keyboard():
-    return InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton(
-                    "❌ لغو عملیات",
-                    callback_data="cancel_operation"
-                )
-            ]
-        ]
-    )
-
+# =========================================================
+# ساخت متن محصول
+# =========================================================
 
 def product_caption(product):
+
+    name = safe_text(product.get("name", "بدون نام"))
+    code = safe_text(product.get("code", "-"))
+    description = safe_text(
+        product.get("description") or "توضیحی ثبت نشده است."
+    )
+
+    price = format_price(product.get("price"))
+
     return (
-        f"💎 <b>{product.get('name', 'بدون نام')}</b>\n\n"
-        f"🔖 کد محصول: <code>{product.get('code', '-')}</code>\n"
-        f"💰 قیمت: <b>{format_price(product.get('price'))}</b>\n\n"
+        f"💎 <b>{name}</b>\n\n"
+        f"🔖 کد محصول: <code>{code}</code>\n"
+        f"💰 قیمت: <b>{price}</b>\n\n"
         f"📝 توضیحات:\n"
-        f"{product.get('description') or 'توضیحی ثبت نشده است.'}"
+        f"{description}"
     )
 
 
@@ -246,28 +306,33 @@ def product_caption(product):
 # /start
 # =========================================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     context.user_data.clear()
 
-    welcome_text = (
+    text = (
         "✨ <b>به فروشگاه هیوه خوش آمدید</b> ✨\n\n"
-        "بدلیجات و اکسسوری‌های خاص و شیک 💎\n\n"
+        "دنیای بدلیجات و اکسسوری‌های خاص و شیک 💎\n\n"
         "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"
     )
 
     if update.message:
+
         await update.message.reply_text(
-            welcome_text,
+            text,
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
 
     elif update.callback_query:
+
         await update.callback_query.answer()
 
         await update.callback_query.edit_message_text(
-            welcome_text,
+            text,
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
@@ -276,49 +341,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# نمایش پنل مدیریت
+# نمایش محصولات
 # =========================================================
 
-async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user_id = update.effective_user.id
-
-    if not is_admin(user_id):
-        if update.callback_query:
-            await update.callback_query.answer(
-                "❌ شما اجازه دسترسی به پنل مدیریت را ندارید.",
-                show_alert=True
-            )
-        return ConversationHandler.END
-
-    context.user_data.clear()
-
-    text = (
-        "🛠 <b>پنل مدیریت هیوه</b>\n\n"
-        "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:"
-    )
-
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_admin_menu_keyboard(),
-        )
-
-    return ConversationHandler.END
-
-
-# =========================================================
-# نمایش محصولات برای مشتری
-# =========================================================
-
-async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_products(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
+
     await query.answer()
 
     try:
+
         response = (
             supabase
             .table("products")
@@ -338,12 +374,13 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             return ConversationHandler.END
 
-        # پیام منوی قبلی را حذف می‌کنیم
+        # حذف پیام قبلی
         try:
             await query.message.delete()
         except Exception:
             pass
 
+        # ارسال محصولات
         for product in products:
 
             caption = product_caption(product)
@@ -353,6 +390,7 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if image_id:
 
                 try:
+
                     await context.bot.send_photo(
                         chat_id=query.message.chat_id,
                         photo=image_id,
@@ -360,10 +398,10 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         parse_mode=ParseMode.HTML,
                     )
 
-                except Exception as photo_error:
+                except Exception as e:
 
                     logger.error(
-                        f"خطا در ارسال عکس محصول: {photo_error}"
+                        f"خطا در ارسال عکس محصول: {e}"
                     )
 
                     await context.bot.send_message(
@@ -382,20 +420,24 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="✨ <b>منوی هیوه</b>",
+            text="✨ <b>برای ادامه یکی از گزینه‌های زیر را انتخاب کنید:</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
 
     except Exception as e:
 
-        logger.exception("خطا در دریافت محصولات")
+        logger.exception(
+            "خطا در دریافت محصولات"
+        )
 
         try:
+
             await query.edit_message_text(
                 "❌ خطایی هنگام دریافت محصولات رخ داد.",
                 reply_markup=get_main_menu_keyboard(),
             )
+
         except Exception:
             pass
 
@@ -406,17 +448,23 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # شروع افزودن محصول
 # =========================================================
 
-async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_add_product(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
-    await query.answer()
 
     if not is_admin(query.from_user.id):
+
         await query.answer(
-            "❌ دسترسی ندارید.",
+            "❌ شما اجازه دسترسی ندارید.",
             show_alert=True
         )
+
         return ConversationHandler.END
+
+    await query.answer()
 
     context.user_data.clear()
 
@@ -431,17 +479,22 @@ async def start_add_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# دریافت کد محصول جدید
+# دریافت کد محصول
 # =========================================================
 
-async def add_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_code(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     code = update.message.text.strip()
 
     if not code:
+
         await update.message.reply_text(
             "❌ کد محصول نمی‌تواند خالی باشد."
         )
+
         return ADD_CODE
 
     try:
@@ -455,18 +508,22 @@ async def add_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         if existing.data:
+
             await update.message.reply_text(
                 "❌ این کد محصول قبلاً ثبت شده است.\n\n"
-                "لطفاً یک کد دیگر وارد کنید:"
+                "لطفاً کد دیگری وارد کنید:"
             )
+
             return ADD_CODE
 
-    except Exception as e:
+    except Exception:
 
-        logger.exception("خطا در بررسی کد محصول")
+        logger.exception(
+            "خطا در بررسی کد محصول"
+        )
 
         await update.message.reply_text(
-            "❌ خطا در بررسی کد محصول. دوباره تلاش کنید."
+            "❌ خطا در بررسی کد محصول."
         )
 
         return ADD_CODE
@@ -483,24 +540,30 @@ async def add_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # =========================================================
-# دریافت نام
+# دریافت نام محصول
 # =========================================================
 
-async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_name(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     name = update.message.text.strip()
 
     if not name:
+
         await update.message.reply_text(
             "❌ نام محصول نمی‌تواند خالی باشد."
         )
+
         return ADD_NAME
 
     context.user_data["new_name"] = name
 
     await update.message.reply_text(
-        "💰 قیمت محصول را به <b>تومان</b> وارد کنید:\n\n"
-        "مثال: <code>28000000</code>",
+        "💰 قیمت محصول را به <b>تومان</b> وارد کنید.\n\n"
+        "مثال:\n"
+        "<code>28000000</code>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_cancel_keyboard(),
     )
@@ -512,11 +575,20 @@ async def add_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # دریافت قیمت
 # =========================================================
 
-async def add_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_price(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-    price_text = update.message.text.strip().replace(",", "")
+    price_text = (
+        update.message.text
+        .strip()
+        .replace(",", "")
+        .replace("٬", "")
+    )
 
     try:
+
         price = Decimal(price_text)
 
         if price <= 0:
@@ -580,7 +652,7 @@ async def add_photo(
     if not update.message.photo:
 
         await update.message.reply_text(
-            "❌ لطفاً یک عکس ارسال کنید."
+            "❌ لطفاً یک عکس معتبر ارسال کنید."
         )
 
         return ADD_PHOTO
@@ -597,10 +669,12 @@ async def add_photo(
 
     try:
 
-        supabase \
-            .table("products") \
-            .insert(product_data) \
+        (
+            supabase
+            .table("products")
+            .insert(product_data)
             .execute()
+        )
 
         context.user_data.clear()
 
@@ -614,13 +688,15 @@ async def add_photo(
 
     except Exception as e:
 
-        logger.exception("خطا در ثبت محصول")
+        logger.exception(
+            f"خطا در ثبت محصول: {e}"
+        )
 
         context.user_data.clear()
 
         await update.message.reply_text(
             "❌ خطا در ثبت محصول در دیتابیس.\n\n"
-            "لطفاً لاگ برنامه را بررسی کنید.",
+            "جزئیات خطا در لاگ Render ثبت شده است.",
             reply_markup=get_admin_menu_keyboard(),
         )
 
@@ -628,7 +704,7 @@ async def add_photo(
 
 
 # =========================================================
-# شروع ویرایش
+# شروع ویرایش محصول
 # =========================================================
 
 async def start_edit_product(
@@ -637,14 +713,17 @@ async def start_edit_product(
 ):
 
     query = update.callback_query
-    await query.answer()
 
     if not is_admin(query.from_user.id):
+
         await query.answer(
-            "❌ دسترسی ندارید.",
+            "❌ شما اجازه دسترسی ندارید.",
             show_alert=True
         )
+
         return ConversationHandler.END
+
+    await query.answer()
 
     context.user_data.clear()
 
@@ -696,10 +775,11 @@ async def edit_select_code(
 
         text = (
             "✏️ <b>محصول پیدا شد</b>\n\n"
-            f"💎 نام: {product.get('name', '-')}\n"
-            f"🔖 کد: {product.get('code', '-')}\n"
+            f"💎 نام: {safe_text(product.get('name', '-'))}\n"
+            f"🔖 کد: {safe_text(product.get('code', '-'))}\n"
             f"💰 قیمت: {format_price(product.get('price'))}\n"
-            f"📝 توضیحات: {product.get('description', '-')}\n\n"
+            f"📝 توضیحات: "
+            f"{safe_text(product.get('description', '-'))}\n\n"
             "کدام قسمت را می‌خواهید تغییر دهید؟"
         )
 
@@ -711,9 +791,11 @@ async def edit_select_code(
 
         return EDIT_MENU
 
-    except Exception as e:
+    except Exception:
 
-        logger.exception("خطا در پیدا کردن محصول")
+        logger.exception(
+            "خطا در پیدا کردن محصول"
+        )
 
         await update.message.reply_text(
             "❌ خطا در جستجوی محصول."
@@ -723,7 +805,7 @@ async def edit_select_code(
 
 
 # =========================================================
-# انتخاب نوع ویرایش
+# منوی ویرایش
 # =========================================================
 
 async def edit_menu(
@@ -732,10 +814,11 @@ async def edit_menu(
 ):
 
     query = update.callback_query
-    await query.answer()
 
     if not is_admin(query.from_user.id):
         return ConversationHandler.END
+
+    await query.answer()
 
     data = query.data
 
@@ -751,8 +834,9 @@ async def edit_menu(
     if data == "edit_price":
 
         await query.edit_message_text(
-            "💰 قیمت جدید را به تومان وارد کنید:\n\n"
-            "مثال: <code>28000000</code>",
+            "💰 قیمت جدید محصول را به تومان وارد کنید.\n\n"
+            "مثال:\n"
+            "<code>28000000</code>",
             parse_mode=ParseMode.HTML,
             reply_markup=get_cancel_keyboard(),
         )
@@ -779,13 +863,14 @@ async def edit_menu(
 
     if data == "admin_panel":
 
+        context.user_data.clear()
+
         await query.edit_message_text(
-            "🛠 <b>پنل مدیریت هیوه</b>",
+            "🛠 <b>پنل مدیریت هیوه</b>\n\n"
+            "لطفاً یکی از گزینه‌ها را انتخاب کنید:",
             parse_mode=ParseMode.HTML,
             reply_markup=get_admin_menu_keyboard(),
         )
-
-        context.user_data.clear()
 
         return ConversationHandler.END
 
@@ -804,33 +889,41 @@ async def edit_name(
     new_name = update.message.text.strip()
 
     if not new_name:
+
         await update.message.reply_text(
-            "❌ نام نمی‌تواند خالی باشد."
+            "❌ نام محصول نمی‌تواند خالی باشد."
         )
+
         return EDIT_NAME
 
     code = context.user_data.get("edit_code")
 
     try:
 
-        supabase \
-            .table("products") \
-            .update({"name": new_name}) \
-            .eq("code", code) \
+        (
+            supabase
+            .table("products")
+            .update({
+                "name": new_name
+            })
+            .eq("code", code)
             .execute()
+        )
+
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ نام محصول با موفقیت تغییر کرد.",
             reply_markup=get_admin_menu_keyboard(),
         )
 
-        context.user_data.clear()
-
         return ConversationHandler.END
 
     except Exception:
 
-        logger.exception("خطا در تغییر نام")
+        logger.exception(
+            "خطا در تغییر نام"
+        )
 
         await update.message.reply_text(
             "❌ خطا در تغییر نام محصول."
@@ -848,7 +941,12 @@ async def edit_price(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    price_text = update.message.text.strip().replace(",", "")
+    price_text = (
+        update.message.text
+        .strip()
+        .replace(",", "")
+        .replace("٬", "")
+    )
 
     try:
 
@@ -860,7 +958,7 @@ async def edit_price(
     except (InvalidOperation, ValueError):
 
         await update.message.reply_text(
-            "❌ قیمت نامعتبر است.\n"
+            "❌ قیمت نامعتبر است.\n\n"
             "لطفاً فقط عدد وارد کنید."
         )
 
@@ -870,24 +968,30 @@ async def edit_price(
 
     try:
 
-        supabase \
-            .table("products") \
-            .update({"price": int(price)}) \
-            .eq("code", code) \
+        (
+            supabase
+            .table("products")
+            .update({
+                "price": int(price)
+            })
+            .eq("code", code)
             .execute()
+        )
+
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ قیمت محصول با موفقیت تغییر کرد.",
             reply_markup=get_admin_menu_keyboard(),
         )
 
-        context.user_data.clear()
-
         return ConversationHandler.END
 
     except Exception:
 
-        logger.exception("خطا در تغییر قیمت")
+        logger.exception(
+            "خطا در تغییر قیمت"
+        )
 
         await update.message.reply_text(
             "❌ خطا در تغییر قیمت محصول."
@@ -914,24 +1018,30 @@ async def edit_description(
 
     try:
 
-        supabase \
-            .table("products") \
-            .update({"description": new_description}) \
-            .eq("code", code) \
+        (
+            supabase
+            .table("products")
+            .update({
+                "description": new_description
+            })
+            .eq("code", code)
             .execute()
+        )
+
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ توضیحات محصول با موفقیت تغییر کرد.",
             reply_markup=get_admin_menu_keyboard(),
         )
 
-        context.user_data.clear()
-
         return ConversationHandler.END
 
     except Exception:
 
-        logger.exception("خطا در تغییر توضیحات")
+        logger.exception(
+            "خطا در تغییر توضیحات"
+        )
 
         await update.message.reply_text(
             "❌ خطا در تغییر توضیحات."
@@ -963,24 +1073,30 @@ async def edit_photo(
 
     try:
 
-        supabase \
-            .table("products") \
-            .update({"image_url": photo_file_id}) \
-            .eq("code", code) \
+        (
+            supabase
+            .table("products")
+            .update({
+                "image_url": photo_file_id
+            })
+            .eq("code", code)
             .execute()
+        )
+
+        context.user_data.clear()
 
         await update.message.reply_text(
             "✅ عکس محصول با موفقیت تغییر کرد.",
             reply_markup=get_admin_menu_keyboard(),
         )
 
-        context.user_data.clear()
-
         return ConversationHandler.END
 
     except Exception:
 
-        logger.exception("خطا در تغییر عکس")
+        logger.exception(
+            "خطا در تغییر عکس"
+        )
 
         await update.message.reply_text(
             "❌ خطا در تغییر عکس محصول."
@@ -999,14 +1115,17 @@ async def start_delete_product(
 ):
 
     query = update.callback_query
-    await query.answer()
 
     if not is_admin(query.from_user.id):
+
         await query.answer(
-            "❌ دسترسی ندارید.",
+            "❌ شما اجازه دسترسی ندارید.",
             show_alert=True
         )
+
         return ConversationHandler.END
+
+    await query.answer()
 
     context.user_data.clear()
 
@@ -1045,7 +1164,7 @@ async def delete_select_code(
         if not result.data:
 
             await update.message.reply_text(
-                "❌ محصولی با این کد پیدا نشد.\n"
+                "❌ محصولی با این کد پیدا نشد.\n\n"
                 "لطفاً دوباره کد را وارد کنید:"
             )
 
@@ -1054,14 +1173,17 @@ async def delete_select_code(
         product = result.data[0]
 
         context.user_data["delete_code"] = code
-        context.user_data["delete_product"] = product
+
+        text = (
+            "⚠️ <b>تأیید حذف محصول</b>\n\n"
+            f"💎 نام: {safe_text(product.get('name', '-'))}\n"
+            f"🔖 کد: {safe_text(product.get('code', '-'))}\n"
+            f"💰 قیمت: {format_price(product.get('price'))}\n\n"
+            "آیا مطمئن هستید که می‌خواهید این محصول را حذف کنید؟"
+        )
 
         await update.message.reply_text(
-            "⚠️ <b>آیا مطمئن هستید؟</b>\n\n"
-            f"💎 محصول: {product.get('name', '-')}\n"
-            f"🔖 کد: {product.get('code', '-')}\n"
-            f"💰 قیمت: {format_price(product.get('price'))}\n\n"
-            "با حذف این محصول، اطلاعات آن از دیتابیس حذف می‌شود.",
+            text,
             parse_mode=ParseMode.HTML,
             reply_markup=get_delete_confirm_keyboard(),
         )
@@ -1070,7 +1192,9 @@ async def delete_select_code(
 
     except Exception:
 
-        logger.exception("خطا در جستجوی محصول برای حذف")
+        logger.exception(
+            "خطا در جستجوی محصول برای حذف"
+        )
 
         await update.message.reply_text(
             "❌ خطا در جستجوی محصول."
@@ -1089,11 +1213,13 @@ async def delete_confirm(
 ):
 
     query = update.callback_query
-    await query.answer()
 
     if not is_admin(query.from_user.id):
         return ConversationHandler.END
 
+    await query.answer()
+
+    # لغو حذف
     if query.data == "delete_confirm_no":
 
         context.user_data.clear()
@@ -1105,17 +1231,20 @@ async def delete_confirm(
 
         return ConversationHandler.END
 
+    # تایید حذف
     if query.data == "delete_confirm_yes":
 
         code = context.user_data.get("delete_code")
 
         try:
 
-            supabase \
-                .table("products") \
-                .delete() \
-                .eq("code", code) \
+            (
+                supabase
+                .table("products")
+                .delete()
+                .eq("code", code)
                 .execute()
+            )
 
             context.user_data.clear()
 
@@ -1128,14 +1257,16 @@ async def delete_confirm(
 
         except Exception:
 
-            logger.exception("خطا در حذف محصول")
+            logger.exception(
+                "خطا در حذف محصول"
+            )
+
+            context.user_data.clear()
 
             await query.edit_message_text(
                 "❌ خطا در حذف محصول.",
                 reply_markup=get_admin_menu_keyboard(),
             )
-
-            context.user_data.clear()
 
             return ConversationHandler.END
 
@@ -1152,22 +1283,30 @@ async def cancel_operation(
 ):
 
     query = update.callback_query
+
     await query.answer()
 
     context.user_data.clear()
 
-    await query.edit_message_text(
-        "❌ عملیات لغو شد.",
-        reply_markup=get_admin_menu_keyboard()
-        if is_admin(query.from_user.id)
-        else get_main_menu_keyboard(),
-    )
+    if is_admin(query.from_user.id):
+
+        await query.edit_message_text(
+            "❌ عملیات لغو شد.",
+            reply_markup=get_admin_menu_keyboard(),
+        )
+
+    else:
+
+        await query.edit_message_text(
+            "❌ عملیات لغو شد.",
+            reply_markup=get_main_menu_keyboard(),
+        )
 
     return ConversationHandler.END
 
 
 # =========================================================
-# مدیریت خطاهای عمومی
+# مدیریت خطا
 # =========================================================
 
 async def error_handler(
@@ -1175,14 +1314,14 @@ async def error_handler(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    logger.exception(
+    logger.error(
         "Exception while handling update:",
         exc_info=context.error
     )
 
 
 # =========================================================
-# ساخت Conversation Handler
+# ساخت ConversationHandler
 # =========================================================
 
 def build_conversation_handler():
@@ -1248,7 +1387,7 @@ def build_conversation_handler():
             ],
 
             # -------------------------
-            # ویرایش محصول
+            # ویرایش
             # -------------------------
 
             EDIT_SELECT_CODE: [
@@ -1294,7 +1433,7 @@ def build_conversation_handler():
             ],
 
             # -------------------------
-            # حذف محصول
+            # حذف
             # -------------------------
 
             DELETE_SELECT_CODE: [
@@ -1329,7 +1468,7 @@ def build_conversation_handler():
 
 
 # =========================================================
-# Handler اصلی دکمه‌ها
+# Handler دکمه‌های عمومی
 # =========================================================
 
 async def button_handler(
@@ -1341,9 +1480,9 @@ async def button_handler(
     data = query.data
     user_id = query.from_user.id
 
-    # -------------------------
+    # --------------------------------
     # بازگشت به منوی اصلی
-    # -------------------------
+    # --------------------------------
 
     if data == "back_to_main":
 
@@ -1352,26 +1491,29 @@ async def button_handler(
         context.user_data.clear()
 
         await query.edit_message_text(
-            "✨ <b>منوی اصلی هیوه</b>",
+            "✨ <b>به منوی اصلی هیوه برگشتید.</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
 
         return
 
-    # -------------------------
+    # --------------------------------
     # مشاهده محصولات
-    # -------------------------
+    # --------------------------------
 
     if data == "user_view_products":
 
-        await show_products(update, context)
+        await show_products(
+            update,
+            context
+        )
 
         return
 
-    # -------------------------
+    # --------------------------------
     # پنل مدیریت
-    # -------------------------
+    # --------------------------------
 
     if data == "admin_panel":
 
@@ -1399,10 +1541,22 @@ async def button_handler(
 
 
 # =========================================================
-# اجرای ربات
+# تابع اصلی
 # =========================================================
 
 def main():
+
+    # =====================================================
+    # مهم:
+    # ساخت Event Loop برای Python 3.14
+    # =====================================================
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # =====================================================
+    # ساخت Application
+    # =====================================================
 
     application = (
         Application
@@ -1411,12 +1565,18 @@ def main():
         .build()
     )
 
+    # =====================================================
     # Conversation Handler
+    # =====================================================
+
     application.add_handler(
         build_conversation_handler()
     )
 
-    # دستورات
+    # =====================================================
+    # /start
+    # =====================================================
+
     application.add_handler(
         CommandHandler(
             "start",
@@ -1424,20 +1584,30 @@ def main():
         )
     )
 
+    # =====================================================
     # دکمه‌های عمومی
+    # =====================================================
+
     application.add_handler(
         CallbackQueryHandler(
             button_handler
         )
     )
 
+    # =====================================================
     # Error Handler
+    # =====================================================
+
     application.add_error_handler(
         error_handler
     )
 
+    # =====================================================
+    # اجرای ربات
+    # =====================================================
+
     logger.info(
-        "🤖 ربات هیوه با موفقیت روشن شد..."
+        "🤖 ربات هیوه با موفقیت آماده اجرا شد..."
     )
 
     application.run_polling(
@@ -1446,7 +1616,7 @@ def main():
 
 
 # =========================================================
-# اجرا
+# اجرای برنامه
 # =========================================================
 
 if __name__ == "__main__":
