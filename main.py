@@ -106,7 +106,8 @@ supabase: Client = create_client(
     ADMIN_ORDERS,
     ADMIN_ORDER_STATUS,
     USER_PRODUCT_CODE,
-) = range(20)
+    SUPPORT_MESSAGE,
+) = range(21)
 
 
 # =========================================================
@@ -179,6 +180,16 @@ def get_main_menu_keyboard():
             InlineKeyboardButton(
                 "🛒 سبد خرید",
                 callback_data="view_cart"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "✨ معرفی فروشگاه",
+                callback_data="store_intro"
+            ),
+            InlineKeyboardButton(
+                "💬 ارتباط با پشتیبانی",
+                callback_data="store_support"
             ),
         ],
         [
@@ -338,6 +349,141 @@ def product_caption(product):
         f"📝 توضیحات:\n"
         f"{description}"
     )
+
+
+# =========================================================
+# معرفی فروشگاه
+# =========================================================
+
+def get_store_info_keyboard():
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "💬 ارتباط با پشتیبانی",
+                callback_data="store_support"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 بازگشت به منوی اصلی",
+                callback_data="back_to_main"
+            )
+        ],
+    ])
+
+
+async def show_store_intro(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "✨ <b>معرفی فروشگاه هیوه</b> ✨\n\n"
+        "به <b>هیوه</b> خوش آمدید؛ جایی برای انتخاب بدلیجات و "
+        "اکسسوری‌های خاص، شیک و چشم‌نواز. 💎\n\n"
+        "ما تلاش می‌کنیم محصولاتی با ظاهر جذاب و کیفیت مناسب "
+        "را با قیمت منصفانه در اختیار شما قرار دهیم.\n\n"
+        "🛍 <b>خرید آسان:</b> محصول موردنظرتان را با کد محصول پیدا کنید، "
+        "به سبد خرید اضافه کنید و سفارش خود را ثبت کنید.\n\n"
+        "💎 <b>انتخاب خاص:</b> برای استایل روزمره، هدیه و تکمیل تیپ شما.\n\n"
+        "🤝 <b>پشتیبانی:</b> اگر درباره محصولات یا سفارش خود سوالی دارید، "
+        "از بخش ارتباط با پشتیبانی با ما در تماس باشید.\n\n"
+        "ممنون که هیوه را برای خریدتان انتخاب می‌کنید. ❤️"
+    )
+
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_store_info_keyboard(),
+    )
+
+
+# =========================================================
+# ارتباط با پشتیبانی
+# =========================================================
+
+async def start_support(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data.pop("support_message", None)
+
+    text = (
+        "💬 <b>ارتباط با پشتیبانی هیوه</b>\n\n"
+        "پیام، سوال یا درخواست خود را همین‌جا برای ما بنویسید.\n"
+        "پیام شما مستقیماً برای پشتیبانی فروشگاه ارسال می‌شود.\n\n"
+        "✍️ لطفاً پیام خود را در یک پیام ارسال کنید:"
+    )
+
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_cancel_keyboard(),
+    )
+
+    return SUPPORT_MESSAGE
+
+
+async def send_support_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    message_text = (update.message.text or "").strip()
+
+    if not message_text:
+        await update.message.reply_text(
+            "❌ لطفاً پیام خود را به صورت متنی ارسال کنید:",
+            reply_markup=get_cancel_keyboard(),
+        )
+        return SUPPORT_MESSAGE
+
+    user = update.effective_user
+    username = f"@{user.username}" if user.username else "ندارد"
+    full_name = safe_text(user.full_name or "بدون نام")
+    user_id = user.id
+
+    support_text = (
+        "💬 <b>پیام جدید برای پشتیبانی هیوه</b>\n\n"
+        f"👤 <b>نام:</b> {full_name}\n"
+        f"🔗 <b>یوزرنیم:</b> {safe_text(username)}\n"
+        f"🆔 <b>آیدی تلگرام:</b> <code>{user_id}</code>\n\n"
+        "📝 <b>پیام مشتری:</b>\n"
+        f"{safe_text(message_text)}"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID,
+            text=support_text,
+            parse_mode=ParseMode.HTML,
+        )
+
+        context.user_data.pop("support_message", None)
+
+        await update.message.reply_text(
+            "✅ <b>پیام شما با موفقیت برای پشتیبانی ارسال شد.</b>\n\n"
+            "همکاران ما در اولین فرصت پیام شما را بررسی می‌کنند. 🌷",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
+
+        return ConversationHandler.END
+
+    except Exception:
+        logger.exception("خطا در ارسال پیام پشتیبانی")
+
+        await update.message.reply_text(
+            "❌ متأسفانه در ارسال پیام مشکلی پیش آمد.\n"
+            "لطفاً کمی بعد دوباره تلاش کنید.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+
+        return ConversationHandler.END
 
 
 # =========================================================
@@ -2227,6 +2373,11 @@ def build_conversation_handler():
                 start_product_lookup,
                 pattern="^user_view_products$"
             ),
+
+            CallbackQueryHandler(
+                start_support,
+                pattern="^store_support$"
+            ),
         ],
 
         states={
@@ -2368,6 +2519,17 @@ def build_conversation_handler():
                     find_product_by_code
                 )
             ],
+
+            # -------------------------
+            # پشتیبانی
+            # -------------------------
+
+            SUPPORT_MESSAGE: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    send_support_message
+                )
+            ],
         },
 
         fallbacks=[
@@ -2451,6 +2613,22 @@ async def button_handler(
             reply_markup=get_main_menu_keyboard(),
         )
 
+        return
+
+    # --------------------------------
+    # معرفی فروشگاه
+    # --------------------------------
+
+    if data == "store_intro":
+        await show_store_intro(update, context)
+        return
+
+    # --------------------------------
+    # ارتباط با پشتیبانی
+    # --------------------------------
+
+    if data == "store_support":
+        await start_support(update, context)
         return
 
     # --------------------------------
