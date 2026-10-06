@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
@@ -199,6 +200,13 @@ async def persistent_main_menu(
         parse_mode=ParseMode.HTML,
         reply_markup=get_main_menu_keyboard(),
     )
+
+    # این پیام نباید در ConversationHandler هم پردازش شود.
+    # در غیر این صورت ممکن است یک متن مثل «🏠 منوی اصلی»
+    # هم منوی اصلی را باز کند و هم به عنوان ورودی مرحله قبلی
+    # (مثلاً کد محصول) پردازش شود.
+    raise ApplicationHandlerStop()
+
 
 
 # =========================================================
@@ -2383,6 +2391,48 @@ async def error_handler(
 
 
 # =========================================================
+# پایان دادن به Conversation فعال هنگام کلیک روی دکمه‌های دیگر
+# =========================================================
+
+async def conversation_callback_fallback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """
+    اگر کاربر وسط یک عملیات باشد و به جای ادامه همان عملیات
+    روی یک دکمه دیگر بزند، Conversation قبلی نباید پیام‌های
+    مربوط به مرحله قبلی را دوباره پردازش کند.
+    """
+
+    query = update.callback_query
+    data = query.data
+
+    # اگر کاربر یک عملیات جدید را از منو شروع کرده، همان عملیات جدید
+    # را اجرا می‌کنیم و Conversation را در state جدید نگه می‌داریم.
+    if data == "admin_add_product":
+        return await start_add_product(update, context)
+
+    if data == "admin_edit_product":
+        return await start_edit_product(update, context)
+
+    if data == "admin_delete_product":
+        return await start_delete_product(update, context)
+
+    if data == "start_checkout":
+        return await start_checkout(update, context)
+
+    if data == "user_view_products":
+        return await start_product_lookup(update, context)
+
+    if data == "store_support":
+        return await start_support(update, context)
+
+    # سایر دکمه‌ها یعنی کاربر از عملیات فعلی خارج شده است.
+    await button_handler(update, context)
+    return ConversationHandler.END
+
+
+# =========================================================
 # ساخت ConversationHandler
 # =========================================================
 
@@ -2580,13 +2630,23 @@ def build_conversation_handler():
                 pattern="^cancel_operation$"
             ),
 
+            # اگر کاربر وسط یک عملیات روی دکمه دیگری بزند،
+            # عملیات قبلی تمام می‌شود تا پیام‌های مرحله قبلی
+            # (مثل «کد محصول باید شامل عدد باشد») بعداً ظاهر نشوند.
+            CallbackQueryHandler(
+                conversation_callback_fallback,
+                pattern="^(?!cancel_operation$).+"
+            ),
+
             CommandHandler(
                 "start",
                 start
             ),
         ],
 
-        allow_reentry=True,
+        # اجازه نمی‌دهیم یک Conversation فعال با کلیک دوباره روی
+        # دکمه‌های ورودی، خودش را از ابتدا باز کند.
+        allow_reentry=False,
     )
 
 
