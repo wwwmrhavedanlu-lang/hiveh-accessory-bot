@@ -17,13 +17,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# اطلاعات اتصال به Supabase (لطفاً مقادیر خود را جایگزین کنید اگر تغییر داده‌اید)
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "YOUR_SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "YOUR_SUPABASE_KEY")
+# اطلاعات اتصال به Supabase (از متغیرهای محیطی رندر خوانده می‌شود)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# آیدی تلگرام ادمین برای دسترسی به پنل مدیریت
-ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "YOUR_ADMIN_CHAT_ID"))
+# آیدی عددی ادمین
+ADMIN_CHAT_ID = 8521643361
 
 # وضعیت‌های مکالمه (States) برای مراحل ثبت و ویرایش
 (
@@ -62,7 +62,6 @@ def get_admin_menu_keyboard():
 
 # استارت ربات
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     welcome_text = "سلام! به فروشگاه ما خوش آمدید. لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:"
     
     if update.message:
@@ -109,7 +108,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 image_id = p.get('image_url')
                 if image_id:
-                    # ارسال عکس با استفاده از file_id تلگرام بدون خطا
                     await context.bot.send_photo(chat_id=query.message.chat_id, photo=image_id, caption=caption)
                 else:
                     await context.bot.send_message(chat_id=query.message.chat_id, text=caption)
@@ -178,7 +176,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ لطفاً یک عکس معتبر ارسال کنید.")
             return
         
-        # ذخیره امن آیدی فایل تلگرام برای جلوگیری از خطای سرور ابری
         photo_file_id = update.message.photo[-1].file_id
 
         p_data = {
@@ -201,7 +198,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- مراحل ویرایش محصول ---
     elif state == EDIT_SELECT_CODE:
         p_code = text
-        # بررسی وجود محصول در دیتابیس
         try:
             res = supabase.table("products").select("*").eq("code", p_code).execute()
             if not res.data:
@@ -214,10 +210,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['edit_price'] = product.get('price')
             context.user_data['edit_desc'] = product.get('description')
             
-            context.user_data['state'] = EDIT_PHOTO # یا می‌تونید اول عکس بگیرید یا نام
+            context.user_data['state'] = EDIT_PHOTO
             await update.message.reply_text(
                 f"محصول پیدا شد: {product.get('name')}\n"
-                "لطفاً **عکس جدید** محصول را ارسال کنید (یا اگر نمی‌خواهید تغییر کند عکس قبلی را مجدد بفرستید):"
+                "لطفاً **عکس جدید** محصول را ارسال کنید:"
             )
         except Exception as e:
             logger.error(e)
@@ -249,8 +245,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
-    # توکن ربات تلگرام خود را اینجا قرار دهید
-    TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN")
+    TOKEN = os.environ.get("BOT_TOKEN", "")
     
     application = Application.builder().token(TOKEN).build()
 
