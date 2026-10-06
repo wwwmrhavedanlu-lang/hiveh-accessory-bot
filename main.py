@@ -44,7 +44,7 @@ def run_flask():
 # ----------------- منوی اصلی مشتریان -----------------
 def get_main_menu_keyboard():
     keyboard = [
-        [InlineKeyboardButton("🛍️️ مشاهده محصولات", callback_data="user_view_products")],
+        [InlineKeyboardButton("🛍 مشاهده محصولات", callback_data="user_view_products")],
         [InlineKeyboardButton("🛒 ثبت سفارش", callback_data="user_order")],
         [InlineKeyboardButton("📖 معرفی فروشگاه", callback_data="user_about")],
         [InlineKeyboardButton("📞 راه‌های ارتباطی با پشتیبانی", callback_data="user_support")],
@@ -56,8 +56,9 @@ def get_main_menu_keyboard():
 def get_admin_menu_keyboard():
     keyboard = [
         [InlineKeyboardButton("➕ افزودن محصول", callback_data="admin_add_product")],
-        [InlineKeyboardButton("📋 لیست و مدیریت محصولات", callback_data="admin_list_products")],
-        [InlineKeyboardButton("✏️ ویرایش اطلاعات فروشگاه/پشتیبانی", callback_data="admin_edit_info")],
+        [InlineKeyboardButton("✏️ ویرایش محصول", callback_data="admin_edit_product_start")],
+        [InlineKeyboardButton("❌ حذف محصول", callback_data="admin_delete_product_start")],
+        [InlineKeyboardButton("✏️ ویرایش اطلاعات فروشگاه/پشتیبانی", callback_data="admin_edit_info_start")],
         [InlineKeyboardButton("🔙 بازگشت به منوی اصلی", callback_data="user_cancel")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -75,7 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if user.id == ADMIN_ID:
         keyboard = [
-            [InlineKeyboardButton("🛍️️ مشاهده محصولات", callback_data="user_view_products")],
+            [InlineKeyboardButton("🛍 مشاهده محصولات", callback_data="user_view_products")],
             [InlineKeyboardButton("🛒 ثبت سفارش", callback_data="user_order")],
             [InlineKeyboardButton("📖 معرفی فروشگاه", callback_data="user_about")],
             [InlineKeyboardButton("📞 راه‌های ارتباطی با پشتیبانی", callback_data="user_support")],
@@ -86,6 +87,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         reply_markup = get_main_menu_keyboard()
 
+    context.user_data.clear() # پاکسازی وضعیت‌های قبلی
     if update.message:
         await update.message.reply_text(welcome_text, reply_markup=reply_markup)
     elif update.callback_query:
@@ -110,15 +112,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            text = "✨ **لیست محصولات هیوه:**\n\n"
             for p in products:
-                text += f"🔖 کد محصول: {p.get('code')}\n"
-                text += f"💎 نام: {p.get('name')}\n"
-                text += f"💰 قیمت: {p.get('price')}\n"
-                text += f"📝 توضیحات: {p.get('description')}\n"
-                text += "-------------------\n"
+                caption = (
+                    f"🔖 کد محصول: {p.get('code')}\n"
+                    f"💎 نام: {p.get('name')}\n"
+                    f"💰 قیمت: {p.get('price')}\n"
+                    f"📝 توضیحات: {p.get('description')}"
+                )
+                image_url = p.get('image_url')
+                if image_url:
+                    await query.message.reply_photo(photo=image_url, caption=caption)
+                else:
+                    await query.message.reply_text(caption)
             
-            await query.message.edit_text(text, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
+            await query.message.reply_text("✨ برای انتخاب و بررسی بیشتر از منوی زیر استفاده کنید:", reply_markup=get_main_menu_keyboard())
         except Exception as e:
             logger.error(f"Error fetching products: {e}")
             await query.message.edit_text("خطا در دریافت لیست محصولات از دیتابیس.", reply_markup=get_main_menu_keyboard())
@@ -165,108 +172,198 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             await query.answer("شما دسترسی به پنل مدیریت ندارید!", show_alert=True)
             return
-        await query.message.edit_text("⚙️ **پنل مدیریت ادمین هیوه**\n\nیک گزینه را انتخاب کنید:", reply_markup=get_admin_menu_keyboard(), parse_mode="Markdown")
+        context.user_data.clear()
+        await query.message.edit_text("⚙️️ **پنل مدیریت ادمین هیوه**\n\nیک گزینه را انتخاب کنید:", reply_markup=get_admin_menu_keyboard(), parse_mode="Markdown")
 
-    elif data == "admin_list_products":
-        if user_id != ADMIN_ID:
-            return
-        try:
-            response = supabase.table("products").select("*").execute()
-            products = response.data
-            
-            if not products:
-                keyboard = [[InlineKeyboardButton("🔙 بازگشت به پنل ادمین", callback_data="admin_panel")]]
-                await query.message.edit_text("📦 هیچ محصولی برای مدیریت وجود ندارد.", reply_markup=InlineKeyboardMarkup(keyboard))
-                return
-
-            text = "📋 **مدیریت محصولات (برای حذف یا ویرایش):**\n\n"
-            keyboard = []
-            for p in products:
-                p_code = p.get('code')
-                p_name = p.get('name')
-                text += f"کد: {p_code} | نام: {p_name}\n"
-                keyboard.append([InlineKeyboardButton(f"❌ حذف {p_name} (کد: {p_code})", callback_data=f"admin_del_{p_code}")])
-            
-            keyboard.append([InlineKeyboardButton("🔙 بازگشت به پنل ادمین", callback_data="admin_panel")])
-            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        except Exception as e:
-            logger.error(e)
-            await query.message.edit_text("خطا در بارگذاری محصولات.", reply_markup=get_admin_menu_keyboard())
-
-    elif data.startswith("admin_del_"):
-        if user_id != ADMIN_ID:
-            return
-        p_code = data.replace("admin_del_", "")
-        try:
-            supabase.table("products").delete().eq("code", p_code).execute()
-            await query.answer("محصول با موفقیت حذف شد!", show_alert=True)
-            await button_handler(update, context)
-        except Exception as e:
-            logger.error(e)
-            await query.answer("خطا در حذف محصول!", show_alert=True)
-
+    # ---- افزودن محصول مرحله‌به‌مرحله ----
     elif data == "admin_add_product":
         if user_id != ADMIN_ID:
             return
-        context.user_data['waiting_for_product'] = True
-        add_instructions = (
-            "➕ **افزودن محصول جدید**\n\n"
-            "لطفاً اطلاعات محصول را دقیقاً به این صورت و در یک پیام بفرستید:\n\n"
-            "کد: 101\n"
-            "نام: دستبند نقره\n"
-            "قیمت: ۲۵۰ هزار تومان\n"
-            "توضیحات: استیل رنگ ثابت\n"
-            "لینک عکس: https://...\n\n"
-            "یا ارسال دستور /cancel برای انصراف."
-        )
-        keyboard = [[InlineKeyboardButton("🔙 بازگشت به پنل", callback_data="admin_panel")]]
-        await query.message.edit_text(add_instructions, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        context.user_data.clear()
+        context.user_data['state'] = 'add_code'
+        keyboard = [[InlineKeyboardButton("🔙 انصراف", callback_data="admin_panel")]]
+        await query.message.edit_text("➕ **مرحله ۱ از ۵:**\nلطفاً **کد محصول** را وارد کنید:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-    elif data == "admin_edit_info":
+    # ---- حذف محصول با تاییدیه ----
+    elif data == "admin_delete_product_start":
         if user_id != ADMIN_ID:
             return
-        await query.message.edit_text(
-            "✏ برای ویرایش اطلاعات فروشگاه یا پشتیبانی، می‌توانید متون را در کد بات به‌روزرسانی کنید.",
+        context.user_data.clear()
+        context.user_data['state'] = 'delete_get_code'
+        keyboard = [[InlineKeyboardButton("🔙 انصراف", callback_data="admin_panel")]]
+        await query.message.edit_text("❌ **حذف محصول**\n\nلطفاً **کد محصولی** که می‌خواهید حذف کنید را وارد نمایید:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    elif data.startswith("confirm_del_"):
+        if user_id != ADMIN_ID:
+            return
+        p_code = data.replace("confirm_del_", "")
+        try:
+            supabase.table("products").delete().eq("code", p_code).execute()
+            await query.message.edit_text("✅ محصول با موفقیت از دیتابیس حذف شد!", reply_markup=get_admin_menu_keyboard())
+        except Exception as e:
+            logger.error(e)
+            await query.message.edit_text("❌ خطا در حذف محصول.", reply_markup=get_admin_menu_keyboard())
+
+    # ---- ویرایش محصول مرحله‌به‌مرحله ----
+    elif data == "admin_edit_product_start":
+        if user_id != ADMIN_ID:
+            return
+        context.user_data.clear()
+        context.user_data['state'] = 'edit_get_code'
+        keyboard = [[InlineKeyboardButton("🔙 انصراف", callback_data="admin_panel")]]
+        await query.message.edit_text("✏️ **ویرایش محصول**\n\nلطفاً **کد محصولی** که قصد ویرایش آن را دارید وارد کنید:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+    # ---- ویرایش اطلاعات فروشگاه/پشتیبانی ----
+    elif data == "admin_edit_info_start":
+        if user_id != ADMIN_ID:
+            return
+        context.user_data.clear()
+        context.user_data['state'] = 'edit_info_text'
+        keyboard = [[InlineKeyboardButton("🔙 انصراف", callback_data="admin_panel")]]
+        await query.message.edit_text("✏️ **ویرایش اطلاعات فروشگاه/پشتیبانی**\n\nلطفاً متن جدید معرفی فروشگاه یا راه‌های ارتباطی را بفرستید:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+# مدیریت پیام‌ها و مراحل قدم‌به‌قدم ادمین
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    state = context.user_data.get('state')
+
+    # 1. افزودن محصول
+    if state == 'add_code':
+        context.user_data['new_code'] = update.message.text.strip()
+        context.user_data['state'] = 'add_name'
+        await update.message.reply_text("➕ **مرحله ۲ از ۵:**\nحالا **نام محصول** را وارد کنید:")
+    
+    elif state == 'add_name':
+        context.user_data['new_name'] = update.message.text.strip()
+        context.user_data['state'] = 'add_price'
+        await update.message.reply_text("➕ **مرحله ۳ از ۵:**\nحالا **قیمت محصول** را وارد کنید:")
+
+    elif state == 'add_price':
+        context.user_data['new_price'] = update.message.text.strip()
+        context.user_data['state'] = 'add_desc'
+        await update.message.reply_text("➕ **مرحله ۴ از ۵:**\nحالا **توضیحات محصول** را وارد کنید:")
+
+    elif state == 'add_desc':
+        context.user_data['new_desc'] = update.message.text.strip()
+        context.user_data['state'] = 'add_photo'
+        await update.message.reply_text("➕ **مرحله ۵ از ۵ (پایانی):**\nلطفاً **تصویر (عکس) محصول** را مستقیماً ارسال کنید:")
+
+    elif state == 'add_photo':
+        if not update.message.photo:
+            await update.message.reply_text("❌ لطفاً یک عکس ارسال کنید.")
+            return
+        
+        photo_file = await update.message.photo[-1].get_file()
+        photo_url = photo_file.file_path
+
+        p_data = {
+            'code': context.user_data.get('new_code'),
+            'name': context.user_data.get('new_name'),
+            'price': context.user_data.get('new_price'),
+            'description': context.user_data.get('new_desc'),
+            'image_url': photo_url
+        }
+
+        try:
+            supabase.table("products").insert(p_data).execute()
+            context.user_data.clear()
+            await update.message.reply_text("✅ محصول جدید با تصویر و مشخصات کامل ثبت شد!", reply_markup=get_admin_menu_keyboard())
+        except Exception as e:
+            logger.error(e)
+            await update.message.reply_text(f"❌ خطا در ثبت محصول در دیتابیس: {e}", reply_markup=get_admin_menu_keyboard())
+
+    # 2. حذف محصول (گرفتن کد و تاییدیه)
+    elif state == 'delete_get_code':
+        p_code = update.message.text.strip()
+        try:
+            res = supabase.table("products").select("*").eq("code", p_code).execute()
+            if not res.data:
+                await update.message.reply_text("❌ محصولی با این کد پیدا نشد. دوباره تلاش کنید یا به پنل برگردید.")
+                return
+            
+            p_name = res.data[0].get('name')
+            context.user_data.clear()
+            keyboard = [
+                [InlineKeyboardButton(f"✅ بله، حذف شود ({p_name})", callback_data=f"confirm_del_{p_code}")],
+                [InlineKeyboardButton("❌ خیر، انصراف", callback_data="admin_panel")]
+            ]
+            await update.message.reply_text(
+                f"⚠️ **اختار اطمینان از حذف**\n\nآیا از حذف محصول «{p_name}» با کد {p_code} اطمینان دارید؟",
+                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.error(e)
+            await update.message.reply_text("خطا در بررسی کد محصول.")
+
+    # 3. ویرایش محصول
+    elif state == 'edit_get_code':
+        p_code = update.message.text.strip()
+        res = supabase.table("products").select("*").eq("code", p_code).execute()
+        if not res.data:
+            await update.message.reply_text("❌ محصولی با این کد یافت نشد. کد دیگری وارد کنید:")
+            return
+        
+        context.user_data['edit_code'] = p_code
+        context.user_data['state'] = 'edit_name'
+        await update.message.reply_text(f"✏️ محصول یافت شد ({res.data[0].get('name')}).\nحالا **نام جدید محصول** را وارد کنید:")
+
+    elif state == 'edit_name':
+        context.user_data['edit_name'] = update.message.text.strip()
+        context.user_data['state'] = 'edit_price'
+        await update.message.reply_text("حالا **قیمت جدید** را وارد کنید:")
+
+    elif state == 'edit_price':
+        context.user_data['edit_price'] = update.message.text.strip()
+        context.user_data['state'] = 'edit_desc'
+        await update.message.reply_text("حالا **توضیحات جدید** را وارد کنید:")
+
+    elif state == 'edit_desc':
+        context.user_data['edit_desc'] = update.message.text.strip()
+        context.user_data['state'] = 'edit_photo'
+        await update.message.reply_text("حالا **تصویر جدید محصول** را ارسال کنید:")
+
+    elif state == 'edit_photo':
+        if not update.message.photo:
+            await update.message.reply_text("❌ لطفاً یک عکس معتبر بفرستید.")
+            return
+        
+        photo_file = await update.message.photo[-1].get_file()
+        photo_url = photo_file.file_path
+        p_code = context.user_data.get('edit_code')
+
+        updated_data = {
+            'name': context.user_data.get('edit_name'),
+            'price': context.user_data.get('edit_price'),
+            'description': context.user_data.get('edit_desc'),
+            'image_url': photo_url
+        }
+
+        try:
+            supabase.table("products").update(updated_data).eq("code", p_code).execute()
+            context.user_data.clear()
+            await update.message.reply_text("✅ اطلاعات و تصویر محصول با موفقیت ویرایش و در دیتابیس آپدیت شد!", reply_markup=get_admin_menu_keyboard())
+        except Exception as e:
+            logger.error(e)
+            await update.message.reply_text(f"❌ خطا در ویرایش محصول: {e}", reply_markup=get_admin_menu_keyboard())
+
+    # 4. ویرایش اطلاعات فروشگاه یا پشتیبانی
+    elif state == 'edit_info_text':
+        new_text = update.message.text.strip()
+        context.user_data.clear()
+        await update.message.reply_text(
+            f"✅ اطلاعات جدید دریافت و ثبت شد:\n\n{new_text}\n\n(برای اعمال نهایی متن‌ها در بخش معرفی یا پشتیبانی می‌توانید آن را در کد نیز به‌روز کنید)",
             reply_markup=get_admin_menu_keyboard()
         )
 
-# دریافت پیام متنی ادمین برای ثبت محصول جدید
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id == ADMIN_ID and context.user_data.get('waiting_for_product'):
-        text = update.message.text
-        try:
-            lines = text.split('\n')
-            p_data = {}
-            for line in lines:
-                if ":" in line:
-                    key, val = line.split(":", 1)
-                    key = key.strip()
-                    val = val.strip()
-                    if "کد" in key: p_data['code'] = val
-                    elif "نام" in key: p_data['name'] = val
-                    elif "قیمت" in key: p_data['price'] = val
-                    elif "توضیحات" in key: p_data['description'] = val
-                    elif "عکس" in key: p_data['image_url'] = val
-
-            if 'code' in p_data and 'name' in p_data:
-                supabase.table("products").insert(p_data).execute()
-                context.user_data['waiting_for_product'] = False
-                await update.message.reply_text("✅ محصول جدید با موفقیت در دیتابیس ثبت شد!", reply_markup=get_admin_menu_keyboard())
-            else:
-                await update.message.reply_text("❌ فرمت اطلاعات وارد شده اشتباه است. لطفاً طبق الگو دوباره ارسال کنید.")
-        except Exception as e:
-            logger.error(e)
-            await update.message.reply_text(f"❌ خطا در ثبت محصول: {e}")
-
-# ----------------- اجرای اصلی ربات با Event Loop صریح -----------------
+# ----------------- اجرای اصلی ربات -----------------
 def main():
-    # استارت سرور فلاسک در ترد جداگانه
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # ساخت حلقه رویداد صریح برای رفع خطای پایتون ۳.۱۴
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -274,7 +371,7 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO & ~filters.COMMAND, handle_message))
 
     logger.info("Bot is starting polling...")
     application.run_polling()
