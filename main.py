@@ -2790,7 +2790,8 @@ def main():
 
     application.add_handler(
         CallbackQueryHandler(
-            button_handler
+            button_handler,
+            pattern="^(?!(admin_add_product|admin_edit_product|admin_delete_product|start_checkout|user_view_products|store_support)$)"
         )
     )
 
