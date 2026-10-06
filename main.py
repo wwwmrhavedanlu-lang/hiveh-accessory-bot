@@ -396,11 +396,22 @@ async def start_product_lookup(
     query = update.callback_query
     await query.answer()
 
-    await query.edit_message_text(
+    prompt_text = (
         "🔎 <b>جستجوی محصول</b>\n\n"
         "لطفاً <b>کد محصول</b> را وارد کنید.\n\n"
         "🔢 کد را می‌توانید با اعداد <b>فارسی یا انگلیسی</b> وارد کنید.\n"
-        "مثال: <code>۱۲۳۴۵</code> یا <code>12345</code>",
+        "مثال: <code>۱۲۳۴۵</code> یا <code>12345</code>"
+    )
+
+    # چون این دکمه معمولاً زیر عکس محصول است، پیام عکس را ویرایش نمی‌کنیم.
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=prompt_text,
         parse_mode=ParseMode.HTML,
         reply_markup=get_cancel_keyboard(),
     )
@@ -1130,9 +1141,17 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cart = get_cart(context)
 
     if not cart:
-        await query.edit_message_text(
+        text = (
             "🛒 <b>سبد خرید شما خالی است.</b>\n\n"
-            "از بخش محصولات، کالاهای موردنظر خود را به سبد اضافه کنید.",
+            "از بخش محصولات، کالاهای موردنظر خود را به سبد اضافه کنید."
+        )
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text,
             parse_mode=ParseMode.HTML,
             reply_markup=get_cart_keyboard(context),
         )
@@ -1150,8 +1169,14 @@ async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n💰 <b>مبلغ کل: {format_price(cart_total(context))}</b>")
     lines.append(f"📦 تعداد کالا: <b>{cart_count(context)}</b>")
 
-    await query.edit_message_text(
-        "\n\n".join(lines),
+    text = "\n\n".join(lines)
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
         parse_mode=ParseMode.HTML,
         reply_markup=get_cart_keyboard(context),
     )
@@ -2414,8 +2439,14 @@ async def button_handler(
             if key != "cart":
                 context.user_data.pop(key, None)
 
-        await query.edit_message_text(
-            "✨ <b>به منوی اصلی هیوه برگشتید.</b>",
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="✨ <b>به منوی اصلی هیوه برگشتید.</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
         )
