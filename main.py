@@ -2673,15 +2673,6 @@ async def button_handler(
         await start_support(update, context)
         return
 
-    # --------------------------------
-    # مشاهده محصولات
-    # --------------------------------
-
-    if data == "user_view_products":
-
-        await start_product_lookup(update, context)
-        return
-
     if data == "admin_orders":
         if not is_admin(user_id):
             await query.answer("❌ دسترسی ندارید.", show_alert=True)
