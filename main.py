@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -42,7 +43,6 @@ ADMIN_CHAT_ID = 8521643361
 ) = range(12)
 
 
-# کیبوردهای کمکی
 def get_main_menu_keyboard():
     keyboard = [
         [InlineKeyboardButton("📦 مشاهده محصولات", callback_data="user_view_products")],
@@ -60,10 +60,8 @@ def get_admin_menu_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-# استارت ربات
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = "سلام! به فروشگاه ما خوش آمدید. لطفاً از منوی زیر گزینه‌ای را انتخاب کنید:"
-    
     if update.message:
         await update.message.reply_text(welcome_text, reply_markup=get_main_menu_keyboard())
     elif update.callback_query:
@@ -71,7 +69,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(welcome_text, reply_markup=get_main_menu_keyboard())
 
 
-# مدیریت دکمه‌های شیشه‌ای (Callback Queries)
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -90,7 +87,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             response = supabase.table("products").select("*").execute()
             products = response.data
-            
             if not products:
                 await query.message.edit_text(
                     "📦 در حال حاضر محصولی در فروشگاه ثبت نشده است.",
@@ -141,7 +137,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("لطفاً **کد محصولی** که می‌خواهید ویرایش کنید را وارد کنید:")
 
 
-# مدیریت پیام‌های متنی و روند مراحل ثبت/ویرایش
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id != ADMIN_CHAT_ID:
@@ -150,7 +145,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state = context.user_data.get('state')
     text = update.message.text.strip() if update.message.text else ""
 
-    # --- مراحل افزودن محصول ---
     if state == ADD_CODE:
         context.user_data['new_code'] = text
         context.user_data['state'] = ADD_NAME
@@ -177,7 +171,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         photo_file_id = update.message.photo[-1].file_id
-
         p_data = {
             'code': context.user_data.get('new_code'),
             'name': context.user_data.get('new_name'),
@@ -195,7 +188,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data.clear()
             await update.message.reply_text(f"❌ خطا در ثبت محصول در دیتابیس: {e}", reply_markup=get_admin_menu_keyboard())
 
-    # --- مراحل ویرایش محصول ---
     elif state == EDIT_SELECT_CODE:
         p_code = text
         try:
@@ -246,7 +238,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     TOKEN = os.environ.get("BOT_TOKEN", "")
-    
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -255,6 +246,13 @@ def main():
 
     print("🤖 ربات با موفقیت روشن شد و آماده به کار است...")
     
+    # حل مشکل Event Loop در پایتون ۳.۱۴
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
     application.run_polling(drop_pending_updates=True)
 
 
