@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Flask
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode
 
 from telegram.ext import (
@@ -163,6 +163,42 @@ def normalize_product_code(value: str) -> str:
     )
 
     return str(value).translate(translation).strip()
+
+
+# =========================================================
+# دکمه ثابت منوی اصلی کنار محل تایپ پیام
+# =========================================================
+
+def get_persistent_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            [
+                KeyboardButton("🏠 منوی اصلی")
+            ]
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="برای باز کردن منوی اصلی بزنید",
+    )
+
+
+async def persistent_main_menu(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    if not update.message:
+        return
+
+    for key in list(context.user_data.keys()):
+        if key != "cart":
+            context.user_data.pop(key, None)
+
+    await update.message.reply_text(
+        "✨ <b>منوی اصلی هیوه</b> ✨\n\n"
+        "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_main_menu_keyboard(),
+    )
 
 
 # =========================================================
@@ -511,6 +547,12 @@ async def start(
             text,
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu_keyboard(),
+        )
+
+        # کیبورد ثابت پایین صفحه، کنار محل تایپ پیام
+        await update.message.reply_text(
+            "🏠 برای دسترسی سریع به منوی اصلی، از دکمه پایین استفاده کنید.",
+            reply_markup=get_persistent_menu_keyboard(),
         )
 
     elif update.callback_query:
@@ -2720,11 +2762,24 @@ def main():
     )
 
     # =====================================================
+    # دکمه ثابت منوی اصلی
+    # =====================================================
+
+    application.add_handler(
+        MessageHandler(
+            filters.Regex("^🏠 منوی اصلی$"),
+            persistent_main_menu
+        ),
+        group=0
+    )
+
+    # =====================================================
     # Conversation Handler
     # =====================================================
 
     application.add_handler(
-        build_conversation_handler()
+        build_conversation_handler(),
+        group=1
     )
 
     # =====================================================
