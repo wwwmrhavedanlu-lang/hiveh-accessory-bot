@@ -2,7 +2,10 @@ import asyncio
 import html
 import logging
 import os
+import threading
 from decimal import Decimal, InvalidOperation
+
+from flask import Flask
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -2484,8 +2487,43 @@ def main():
 
 
 # =========================================================
+# سرور سلامت برای Render Free Web Service
+# =========================================================
+
+health_app = Flask(__name__)
+
+
+@health_app.route("/", methods=["GET"])
+def health_check():
+    return "HIVEH bot is running", 200
+
+
+@health_app.route("/health", methods=["GET"])
+def health_endpoint():
+    return "OK", 200
+
+
+def run_health_server():
+    port = int(os.environ.get("PORT", "10000"))
+    health_app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False,
+        use_reloader=False,
+    )
+
+
+# =========================================================
 # اجرای برنامه
 # =========================================================
 
 if __name__ == "__main__":
+    # Render Web Service برای رایگان ماندن نیاز به یک پورت باز دارد.
+    # سرور سلامت در Thread جدا اجرا می‌شود و Telegram polling مستقل می‌ماند.
+    threading.Thread(
+        target=run_health_server,
+        daemon=True,
+        name="render-health-server",
+    ).start()
+
     main()
