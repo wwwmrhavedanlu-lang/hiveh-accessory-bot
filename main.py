@@ -14,7 +14,7 @@ from telegram.ext import (
     filters,
 )
 
-# ----------------- تنظیمات لایگ و محیط -----------------
+# ----------------- تنظیمات لاگ و محیط -----------------
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
@@ -44,7 +44,7 @@ def run_flask():
 # ----------------- منوی اصلی مشتریان -----------------
 def get_main_menu_keyboard():
     keyboard = [
-        [InlineKeyboardButton("🛍️ مشاهده محصولات", callback_data="user_view_products")],
+        [InlineKeyboardButton("🛍️️ مشاهده محصولات", callback_data="user_view_products")],
         [InlineKeyboardButton("🛒 ثبت سفارش", callback_data="user_order")],
         [InlineKeyboardButton("📖 معرفی فروشگاه", callback_data="user_about")],
         [InlineKeyboardButton("📞 راه‌های ارتباطی با پشتیبانی", callback_data="user_support")],
@@ -73,10 +73,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"برای شروع یکی از گزینه‌های زیر رو انتخاب کنید 🙏"
     )
     
-    # اگر ادمین بود، دکمه پنل ادمین را هم اضافه کنیم یا در منو نشان دهیم
     if user.id == ADMIN_ID:
         keyboard = [
-            [InlineKeyboardButton("🛍️ مشاهده محصولات", callback_data="user_view_products")],
+            [InlineKeyboardButton("🛍️️ مشاهده محصولات", callback_data="user_view_products")],
             [InlineKeyboardButton("🛒 ثبت سفارش", callback_data="user_order")],
             [InlineKeyboardButton("📖 معرفی فروشگاه", callback_data="user_about")],
             [InlineKeyboardButton("📞 راه‌های ارتباطی با پشتیبانی", callback_data="user_support")],
@@ -100,7 +99,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if data == "user_view_products":
-        # دریافت محصولات از Supabase (ستون‌ها: code, name, price, description, image_url)
         try:
             response = supabase.table("products").select("*").execute()
             products = response.data
@@ -202,7 +200,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             supabase.table("products").delete().eq("code", p_code).execute()
             await query.answer("محصول با موفقیت حذف شد!", show_alert=True)
-            # بازگشت به لیست
             await button_handler(update, context)
         except Exception as e:
             logger.error(e)
@@ -229,7 +226,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             return
         await query.message.edit_text(
-            "✏️️ برای ویرایش اطلاعات فروشگاه یا پشتیبانی، می‌توانید متون را در کد بات به‌روزرسانی کنید.",
+            "✏ برای ویرایش اطلاعات فروشگاه یا پشتیبانی، می‌توانید متون را در کد بات به‌روزرسانی کنید.",
             reply_markup=get_admin_menu_keyboard()
         )
 
@@ -262,14 +259,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(e)
             await update.message.reply_text(f"❌ خطا در ثبت محصول: {e}")
 
-# ----------------- اجرای اصلی ربات -----------------
+# ----------------- اجرای اصلی ربات با Event Loop صریح -----------------
 def main():
     # استارت سرور فلاسک در ترد جداگانه
     flask_thread = Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # ساخت اپلیکیشن تلگرام
+    # ساخت حلقه رویداد صریح برای رفع خطای پایتون ۳.۱۴
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
