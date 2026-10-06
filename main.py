@@ -105,7 +105,8 @@ supabase: Client = create_client(
     CHECKOUT_CONFIRM,
     ADMIN_ORDERS,
     ADMIN_ORDER_STATUS,
-) = range(19)
+    USER_PRODUCT_CODE,
+) = range(20)
 
 
 # =========================================================
@@ -143,6 +144,24 @@ def safe_text(value) -> str:
         return ""
 
     return html.escape(str(value))
+
+
+
+def normalize_product_code(value: str) -> str:
+    """
+    تبدیل اعداد فارسی و عربی به انگلیسی تا کد محصول با هر دو شکل کار کند.
+    مثال: ۱۲۳۴۵ و ١٢٣٤٥ و 12345 همگی به 12345 تبدیل می‌شوند.
+    """
+
+    if value is None:
+        return ""
+
+    translation = str.maketrans(
+        "۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩",
+        "01234567890123456789",
+    )
+
+    return str(value).translate(translation).strip()
 
 
 # =========================================================
@@ -362,101 +381,148 @@ async def start(
 
 
 # =========================================================
-# نمایش محصولات
+# مشاهده محصول با کد
 # =========================================================
 
-async def show_products(
+async def start_product_lookup(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
+    """
+    وقتی مشتری روی «مشاهده محصولات» می‌زند، به جای نمایش همه محصولات
+    ابتدا کد محصول را می‌گیرد.
+    """
 
     query = update.callback_query
     await query.answer()
 
+    await query.edit_message_text(
+        "🔎 <b>جستجوی محصول</b>\n\n"
+        "لطفاً <b>کد محصول</b> را وارد کنید.\n\n"
+        "🔢 کد را می‌توانید با اعداد <b>فارسی یا انگلیسی</b> وارد کنید.\n"
+        "مثال: <code>۱۲۳۴۵</code> یا <code>12345</code>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_cancel_keyboard(),
+    )
+
+    return USER_PRODUCT_CODE
+
+
+async def find_product_by_code(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """جستجوی محصول بر اساس کد، با پشتیبانی از اعداد فارسی و انگلیسی."""
+
+    raw_code = update.message.text or ""
+    code = normalize_product_code(raw_code)
+
+    if not code:
+        await update.message.reply_text(
+            "❌ لطفاً کد محصول را وارد کنید.",
+            reply_markup=get_cancel_keyboard(),
+        )
+        return USER_PRODUCT_CODE
+
+    if not code.isdigit():
+        await update.message.reply_text(
+            "❌ کد محصول فقط باید شامل عدد باشد.\n\n"
+            "مثال: <code>12345</code> یا <code>۱۲۳۴۵</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_cancel_keyboard(),
+        )
+        return USER_PRODUCT_CODE
+
     try:
-        response = (
+        result = (
             supabase
             .table("products")
             .select("*")
-            .order("id", desc=False)
+            .eq("code", code)
+            .limit(1)
             .execute()
         )
 
-        products = response.data or []
-
-        if not products:
-            await query.edit_message_text(
-                "📦 در حال حاضر محصولی در فروشگاه ثبت نشده است.",
-                reply_markup=get_main_menu_keyboard(),
+        if not result.data:
+            await update.message.reply_text(
+                "❌ محصولی با این کد پیدا نشد.\n\n"
+                "کد محصول را بررسی کنید و دوباره وارد کنید:",
+                reply_markup=get_cancel_keyboard(),
             )
-            return ConversationHandler.END
+            return USER_PRODUCT_CODE
 
+        product = result.data[0]
+        product_id = product.get("id")
+        image_id = product.get("image_url")
+        caption = product_caption(product)
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🛒 افزودن به سبد",
+                    callback_data=f"add_to_cart:{product_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🛒 مشاهده سبد خرید",
+                    callback_data="view_cart"
+                ),
+                InlineKeyboardButton(
+                    "🔎 جستجوی محصول دیگر",
+                    callback_data="user_view_products"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 منوی اصلی",
+                    callback_data="back_to_main"
+                )
+            ],
+        ])
+
+        # پیام درخواست کد را حذف می‌کنیم تا نتیجه تمیز نمایش داده شود.
         try:
-            await query.message.delete()
+            await update.message.delete()
         except Exception:
             pass
 
-        for product in products:
-            caption = product_caption(product)
-            image_id = product.get("image_url")
-            product_id = product.get("id")
-
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "💎 مشاهده جزئیات",
-                        callback_data=f"product_detail:{product_id}"
-                    ),
-                    InlineKeyboardButton(
-                        "🛒 افزودن به سبد",
-                        callback_data=f"add_to_cart:{product_id}"
-                    ),
-                ]
-            ])
-
-            if image_id:
-                try:
-                    await context.bot.send_photo(
-                        chat_id=query.message.chat_id,
-                        photo=image_id,
-                        caption=caption,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=keyboard,
-                    )
-                except Exception as e:
-                    logger.error(f"خطا در ارسال عکس محصول: {e}")
-                    await context.bot.send_message(
-                        chat_id=query.message.chat_id,
-                        text=caption,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=keyboard,
-                    )
-            else:
+        if image_id:
+            try:
+                await context.bot.send_photo(
+                    chat_id=update.effective_chat.id,
+                    photo=image_id,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                logger.error(f"خطا در ارسال عکس محصول: {e}")
                 await context.bot.send_message(
-                    chat_id=query.message.chat_id,
+                    chat_id=update.effective_chat.id,
                     text=caption,
                     parse_mode=ParseMode.HTML,
                     reply_markup=keyboard,
                 )
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+                reply_markup=keyboard,
+            )
 
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="✨ <b>برای ادامه یکی از گزینه‌های زیر را انتخاب کنید:</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu_keyboard(),
-        )
+        return ConversationHandler.END
 
     except Exception:
-        logger.exception("خطا در دریافت محصولات")
-        try:
-            await query.edit_message_text(
-                "❌ خطایی هنگام دریافت محصولات رخ داد.",
-                reply_markup=get_main_menu_keyboard(),
-            )
-        except Exception:
-            pass
+        logger.exception("خطا در جستجوی محصول با کد")
+        await update.message.reply_text(
+            "❌ خطایی هنگام جستجوی محصول رخ داد.\n"
+            "لطفاً دوباره تلاش کنید.",
+            reply_markup=get_main_menu_keyboard(),
+        )
+        return ConversationHandler.END
 
-    return ConversationHandler.END
 
 # =========================================================
 # سفارش و تسویه حساب
@@ -2131,6 +2197,11 @@ def build_conversation_handler():
                 start_checkout,
                 pattern="^start_checkout$"
             ),
+
+            CallbackQueryHandler(
+                start_product_lookup,
+                pattern="^user_view_products$"
+            ),
         ],
 
         states={
@@ -2265,6 +2336,13 @@ def build_conversation_handler():
                     pattern="^(checkout_confirm|checkout_restart|checkout_cancel)$"
                 )
             ],
+
+            USER_PRODUCT_CODE: [
+                MessageHandler(
+                    filters.TEXT & ~filters.COMMAND,
+                    find_product_by_code
+                )
+            ],
         },
 
         fallbacks=[
@@ -2350,11 +2428,7 @@ async def button_handler(
 
     if data == "user_view_products":
 
-        await show_products(
-            update,
-            context
-        )
-
+        await start_product_lookup(update, context)
         return
 
     if data == "admin_orders":
