@@ -1,6 +1,5 @@
 import logging
 import os
-import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -18,7 +17,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# اطلاعات اتصال به Supabase (از متغیرهای محیطی رندر خوانده می‌شود)
+# اطلاعات اتصال به Supabase
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -256,14 +255,8 @@ def main():
 
     print("🤖 ربات با موفقیت روشن شد و آماده به کار است...")
     
-    # تنظیم ایمن حلقه رویداد برای سازگاری کامل با پایتون ۳.۱۴ در رندر
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    application.run_polling()
+    # استفاده از تنظیم استاندارد drop_pending_updates برای جلوگیری از تداخل و خطای Conflict
+    application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
