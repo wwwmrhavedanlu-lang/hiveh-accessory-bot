@@ -1,5 +1,6 @@
 import logging
 import os
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -254,6 +255,14 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, message_handler))
 
     print("🤖 ربات با موفقیت روشن شد و آماده به کار است...")
+    
+    # تنظیم ایمن حلقه رویداد برای سازگاری کامل با پایتون ۳.۱۴ در رندر
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
     application.run_polling()
 
 
