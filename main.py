@@ -7,7 +7,14 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Flask
 
-from telegram import (\n    Update,\n    InlineKeyboardButton,\n    InlineKeyboardMarkup,\n    ReplyKeyboardMarkup,\n    ReplyKeyboardRemove,\n    KeyboardButton,\n)
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    KeyboardButton,
+)
 from telegram.constants import ParseMode
 
 from telegram.ext import (
