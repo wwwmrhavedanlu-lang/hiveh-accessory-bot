@@ -255,7 +255,7 @@ def get_main_menu_keyboard():
         ],
         [
             InlineKeyboardButton(
-                "📦 وضعیت سفارش‌های من",
+                "📦 پیگیری و وضعیت سفارش من",
                 callback_data="user_orders"
             ),
         ],
