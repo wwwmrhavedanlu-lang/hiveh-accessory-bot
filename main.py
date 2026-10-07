@@ -227,7 +227,7 @@ def with_exit_button(keyboard):
             callback_data="exit_bot"
         )
     ])
-    return with_exit_button(keyboard)
+    return InlineKeyboardMarkup(keyboard)
 
 
 def get_main_menu_keyboard():
