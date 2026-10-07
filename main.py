@@ -261,7 +261,7 @@ def get_main_menu_keyboard():
         ],
     ]
 
-    return InlineKeyboardMarkup(keyboard)
+    return with_exit_button(keyboard)
 
 # =========================================================
 # منوی مدیریت
@@ -308,7 +308,7 @@ def get_admin_menu_keyboard():
         ],
     ]
 
-    return InlineKeyboardMarkup(keyboard)
+    return with_exit_button(keyboard)
 
 
 # =========================================================
@@ -346,7 +346,7 @@ def get_edit_menu_keyboard():
         ],
     ]
 
-    return InlineKeyboardMarkup(keyboard)
+    return with_exit_button(keyboard)
 
 
 # =========================================================
@@ -386,7 +386,7 @@ def get_delete_confirm_keyboard():
         ]
     ]
 
-    return InlineKeyboardMarkup(keyboard)
+    return with_exit_button(keyboard)
 
 
 # =========================================================
@@ -774,7 +774,7 @@ def get_checkout_keyboard():
 
 
 def get_admin_orders_keyboard():
-    return InlineKeyboardMarkup([
+    return with_exit_button([
         [
             InlineKeyboardButton(
                 "📋 سفارش‌های جدید",
@@ -797,7 +797,7 @@ def get_admin_orders_keyboard():
 
 
 def get_order_status_keyboard(order_id):
-    return InlineKeyboardMarkup([
+    return with_exit_button([
         [
             InlineKeyboardButton(
                 "⏳ در حال بررسی",
@@ -1344,7 +1344,7 @@ def get_cart_keyboard(context):
             callback_data="back_to_main"
         )
     ])
-    return InlineKeyboardMarkup(keyboard)
+    return with_exit_button(keyboard)
 
 
 async def show_cart(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1443,7 +1443,7 @@ async def product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        keyboard = InlineKeyboardMarkup([
+        keyboard = with_exit_button([
             [
                 InlineKeyboardButton(
                     "🛒 افزودن به سبد",
