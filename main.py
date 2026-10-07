@@ -255,6 +255,12 @@ def get_main_menu_keyboard():
         ],
         [
             InlineKeyboardButton(
+                "📦 وضعیت سفارش‌های من",
+                callback_data="user_orders"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 "👤 پنل مدیریت",
                 callback_data="admin_panel"
             )
@@ -835,6 +841,118 @@ def order_status_fa(status):
         "delivered": "🚚 ارسال شد",
         "cancelled": "❌ لغو شده",
     }.get(status, status)
+
+
+async def show_user_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """نمایش سفارش‌های ثبت‌شده مشتری و آخرین وضعیت هر سفارش."""
+
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    try:
+        orders_result = (
+            supabase
+            .table("orders")
+            .select("*")
+            .eq("telegram_user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+
+        orders = orders_result.data or []
+
+        if not orders:
+            await query.edit_message_text(
+                "📦 <b>سفارش‌های من</b>\n\n"
+                "هنوز سفارشی برای شما ثبت نشده است.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=with_exit_button([
+                    [
+                        InlineKeyboardButton(
+                            "📦 مشاهده محصولات",
+                            callback_data="user_view_products"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔙 منوی اصلی",
+                            callback_data="back_to_main"
+                        )
+                    ],
+                ]),
+            )
+            return
+
+        lines = ["📦 <b>وضعیت سفارش‌های من</b>"]
+
+        for order in orders:
+            order_id = order.get("id")
+            status = order.get("status", "pending")
+            created_at = order.get("created_at", "")
+
+            items_result = (
+                supabase
+                .table("order_items")
+                .select("*")
+                .eq("order_id", order_id)
+                .execute()
+            )
+
+            lines.append("")
+            lines.append(f"🧾 <b>سفارش #{order_id}</b>")
+            if created_at:
+                lines.append(f"📅 تاریخ ثبت: {safe_text(str(created_at)[:10])}")
+            lines.append(
+                f"📌 وضعیت: <b>{order_status_fa(status)}</b>"
+            )
+
+            lines.append("🛍 <b>اقلام سفارش:</b>")
+            for item in items_result.data or []:
+                lines.append(
+                    f"• {safe_text(item.get('product_name', '-'))} × "
+                    f"{item.get('quantity', 0)}"
+                )
+
+            lines.append(
+                f"💰 مبلغ کل: <b>{format_price(order.get('total'))}</b>"
+            )
+
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode=ParseMode.HTML,
+            reply_markup=with_exit_button([
+                [
+                    InlineKeyboardButton(
+                        "🔄 بروزرسانی وضعیت",
+                        callback_data="user_orders"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "📦 مشاهده محصولات",
+                        callback_data="user_view_products"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "🔙 منوی اصلی",
+                        callback_data="back_to_main"
+                    )
+                ],
+            ]),
+        )
+
+    except Exception:
+        logger.exception("خطا در نمایش سفارش‌های مشتری")
+        await query.edit_message_text(
+            "❌ متأسفانه دریافت وضعیت سفارش‌ها با مشکل مواجه شد.\n"
+            "لطفاً چند لحظه بعد دوباره تلاش کنید.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_menu_keyboard(),
+        )
 
 
 async def start_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2486,6 +2604,10 @@ async def conversation_callback_fallback(
     if data == "store_support":
         return await start_support(update, context)
 
+    if data == "user_orders":
+        await show_user_orders(update, context)
+        return ConversationHandler.END
+
     # سایر دکمه‌ها یعنی کاربر از عملیات فعلی خارج شده است.
     await button_handler(update, context)
     return ConversationHandler.END
@@ -2790,6 +2912,10 @@ async def button_handler(
 
     if data == "store_support":
         await start_support(update, context)
+        return
+
+    if data == "user_orders":
+        await show_user_orders(update, context)
         return
 
     if data == "admin_orders":
