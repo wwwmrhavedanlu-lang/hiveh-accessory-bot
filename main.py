@@ -178,7 +178,9 @@ def get_persistent_menu_keyboard():
             ]
         ],
         resize_keyboard=True,
-        is_persistent=True,
+        # این کیبورد دیگر دائمی نیست تا دکمه Back گوشی در چت گیر نکند.
+        one_time_keyboard=True,
+        is_persistent=False,
         input_field_placeholder="برای باز کردن منوی اصلی بزنید",
     )
 
