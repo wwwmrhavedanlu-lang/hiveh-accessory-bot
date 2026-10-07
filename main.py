@@ -7,7 +7,7 @@ from decimal import Decimal, InvalidOperation
 
 from flask import Flask
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
+from telegram import (\n    Update,\n    InlineKeyboardButton,\n    InlineKeyboardMarkup,\n    ReplyKeyboardMarkup,\n    ReplyKeyboardRemove,\n    KeyboardButton,\n)
 from telegram.constants import ParseMode
 
 from telegram.ext import (
@@ -215,6 +215,21 @@ async def persistent_main_menu(
 # منوی اصلی
 # =========================================================
 
+
+def with_exit_button(keyboard):
+    """
+    به تمام منوهای دکمه‌ای ربات یک دکمه خروج اضافه می‌کند.
+    """
+    keyboard = list(keyboard)
+    keyboard.append([
+        InlineKeyboardButton(
+            "🚪 خروج از ربات",
+            callback_data="exit_bot"
+        )
+    ])
+    return with_exit_button(keyboard)
+
+
 def get_main_menu_keyboard():
 
     keyboard = [
@@ -340,7 +355,7 @@ def get_edit_menu_keyboard():
 
 def get_cancel_keyboard():
 
-    return InlineKeyboardMarkup(
+    return with_exit_button(
         [
             [
                 InlineKeyboardButton(
@@ -402,7 +417,7 @@ def product_caption(product):
 # =========================================================
 
 def get_store_info_keyboard():
-    return InlineKeyboardMarkup([
+    return with_exit_button([
         [
             InlineKeyboardButton(
                 "💬 ارتباط با پشتیبانی",
@@ -665,7 +680,7 @@ async def find_product_by_code(
         image_id = product.get("image_url")
         caption = product_caption(product)
 
-        keyboard = InlineKeyboardMarkup([
+        keyboard = with_exit_button([
             [
                 InlineKeyboardButton(
                     "🛒 افزودن به سبد",
@@ -738,7 +753,7 @@ async def find_product_by_code(
 # =========================================================
 
 def get_checkout_keyboard():
-    return InlineKeyboardMarkup([
+    return with_exit_button([
         [
             InlineKeyboardButton(
                 "✅ تأیید و ثبت سفارش",
@@ -1091,7 +1106,7 @@ async def show_admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "\n\n".join(lines),
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([
+            reply_markup=with_exit_button([
                 [
                     InlineKeyboardButton(
                         f"🧾 #{order['id']}",
@@ -2345,6 +2360,48 @@ async def delete_confirm(
     return DELETE_CONFIRM
 
 
+
+# =========================================================
+# خروج از ربات
+# =========================================================
+
+async def exit_bot(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """
+    خروج امن از همه مراحل فعال ربات.
+    توجه: تلگرام اجازه بستن مستقیم صفحه چت را به ربات نمی‌دهد؛
+    در عوض همه state های فعال پاک می‌شوند، منوی فعلی حذف می‌شود
+    و کیبورد ربات از صفحه جمع می‌شود.
+    """
+    query = update.callback_query
+
+    await query.answer("از ربات خارج شدید.")
+
+    # سبد خرید را نگه می‌داریم تا با خروج، اطلاعات خرید مشتری از بین نرود.
+    for key in list(context.user_data.keys()):
+        if key != "cart":
+            context.user_data.pop(key, None)
+
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=(
+            "🚪 <b>از ربات هیوه خارج شدید.</b>\n\n"
+            "هر زمان خواستید دوباره وارد ربات شوید، کافی است /start را بزنید."
+        ),
+        parse_mode=ParseMode.HTML,
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    return ConversationHandler.END
+
+
 # =========================================================
 # لغو عملیات
 # =========================================================
@@ -2812,6 +2869,18 @@ def main():
         .builder()
         .token(BOT_TOKEN)
         .build()
+    )
+
+    # =====================================================
+    # دکمه خروج از ربات - قبل از ConversationHandler
+    # =====================================================
+
+    application.add_handler(
+        CallbackQueryHandler(
+            exit_bot,
+            pattern="^exit_bot$"
+        ),
+        group=0
     )
 
     # =====================================================
