@@ -1514,6 +1514,7 @@ async def update_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE
                 .table("orders")
                 .delete()
                 .eq("id", order_id)
+                .select("id")
                 .execute()
             )
 
