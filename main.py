@@ -2163,7 +2163,7 @@ async def edit_select_code(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    code = update.message.text.strip()
+    code = normalize_product_code(update.message.text)
 
     try:
 
@@ -2655,18 +2655,34 @@ async def delete_confirm(
 
         try:
 
-            (
+            if not code:
+                await query.edit_message_text(
+                    "❌ کد محصول پیدا نشد. لطفاً عملیات حذف را دوباره شروع کنید.",
+                    reply_markup=get_admin_menu_keyboard(),
+                )
+                context.user_data.clear()
+                return ConversationHandler.END
+
+            deleted_result = (
                 supabase
                 .table("products")
                 .delete()
                 .eq("code", code)
+                .select("id")
                 .execute()
             )
 
             context.user_data.clear()
 
+            if not deleted_result.data:
+                await query.edit_message_text(
+                    "❌ محصولی با این کد پیدا نشد یا قبلاً حذف شده است.",
+                    reply_markup=get_admin_menu_keyboard(),
+                )
+                return ConversationHandler.END
+
             await query.edit_message_text(
-                "✅ محصول با موفقیت حذف شد.",
+                "✅ محصول با موفقیت حذف شد. اطلاعات سفارش‌های قبلی حفظ شده‌اند.",
                 reply_markup=get_admin_menu_keyboard(),
             )
 
