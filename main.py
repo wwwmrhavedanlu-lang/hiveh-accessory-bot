@@ -875,6 +875,7 @@ async def show_user_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             .table("orders")
             .select("*")
             .eq("telegram_user_id", user_id)
+            .neq("status", "cancelled")
             .order("created_at", desc=True)
             .limit(50)
             .execute()
@@ -991,7 +992,7 @@ async def show_user_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_user_order_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """نمایش تاریخچه همه سفارش‌های مشتری، شامل سفارش‌های لغوشده."""
+    """نمایش تاریخچه سفارش‌های مشتری؛ سفارش‌های لغوشده حذف شده‌اند."""
 
     query = update.callback_query
     await query.answer()
@@ -1004,6 +1005,7 @@ async def show_user_order_history(update: Update, context: ContextTypes.DEFAULT_
             .table("orders")
             .select("*")
             .eq("telegram_user_id", user_id)
+            .neq("status", "cancelled")
             .order("created_at", desc=True)
             .limit(50)
             .execute()
@@ -1343,6 +1345,7 @@ async def show_admin_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             supabase
             .table("orders")
             .select("*")
+            .neq("status", "cancelled")
             .order("created_at", desc=True)
         )
 
@@ -1415,6 +1418,7 @@ async def show_admin_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             .table("orders")
             .select("*")
             .eq("id", order_id)
+            .neq("status", "cancelled")
             .limit(1)
             .execute()
         )
@@ -1486,11 +1490,64 @@ async def update_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE
         _, order_id, status = query.data.split(":", 2)
         order_id = int(order_id)
 
+        # سفارش لغوشده باید همراه با اقلامش برای همیشه از دیتابیس حذف شود.
+        if status == "cancelled":
+            order_result = (
+                supabase
+                .table("orders")
+                .select("*")
+                .eq("id", order_id)
+                .neq("status", "cancelled")
+                .limit(1)
+                .execute()
+            )
+
+            if not order_result.data:
+                await query.answer("❌ سفارش پیدا نشد یا قبلاً حذف شده است.", show_alert=True)
+                return
+
+            order = order_result.data[0]
+
+            supabase.table("order_items").delete().eq("order_id", order_id).execute()
+            deleted = (
+                supabase
+                .table("orders")
+                .delete()
+                .eq("id", order_id)
+                .execute()
+            )
+
+            if not deleted.data:
+                await query.answer("❌ حذف سفارش انجام نشد.", show_alert=True)
+                return
+
+            await query.answer("🗑 سفارش و اقلام آن حذف شدند.")
+            await query.edit_message_text(
+                f"🗑 <b>سفارش #{order_id} لغو و به‌طور کامل حذف شد.</b>",
+                parse_mode=ParseMode.HTML,
+                reply_markup=get_admin_orders_keyboard(),
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=order["telegram_user_id"],
+                    text=(
+                        f"❌ <b>سفارش #{order_id} لغو شد.</b>\n\n"
+                        "این سفارش از سوابق سفارش‌ها حذف شده است."
+                    ),
+                    parse_mode=ParseMode.HTML,
+                )
+            except Exception:
+                logger.exception("خطا در اطلاع‌رسانی لغو سفارش به مشتری")
+
+            return
+
         result = (
             supabase
             .table("orders")
             .update({"status": status})
             .eq("id", order_id)
+            .neq("status", "cancelled")
             .execute()
         )
 
@@ -1499,7 +1556,6 @@ async def update_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         await query.answer("✅ وضعیت سفارش تغییر کرد.")
-
         order = result.data[0]
 
         await query.edit_message_text(
@@ -1526,7 +1582,11 @@ async def update_order_status(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     except Exception:
         logger.exception("خطا در تغییر وضعیت سفارش")
-        await query.answer("❌ خطا در تغییر وضعیت سفارش.", show_alert=True)
+        try:
+            await query.answer("❌ خطا در تغییر وضعیت سفارش.", show_alert=True)
+        except Exception:
+            pass
+
 
 
 # =========================================================
